@@ -1,8 +1,8 @@
 # SO-101 VR Control
 
 Open-source browser-based VR teleoperation for the SO-101 robot arm using Meta Quest. One command, no app install.
+<img width="1799" height="949" alt="Screenshot from 2026-05-28 19-49-15" src="https://github.com/user-attachments/assets/c88ac88d-317c-44c9-9eea-3eb3625b529f" />
 
-<img src="web-ui/media/vr_instructions.svg" alt="VR Controller Guide" width="420">
 
 ## Features
 
