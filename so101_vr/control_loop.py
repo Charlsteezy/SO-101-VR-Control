@@ -190,29 +190,23 @@ class ControlLoop:
     
     def _initialize_arm_states(self):
         """Initialize arm states with current robot positions."""
-        if self.robot_interface:
-            # Get current end effector positions
-            left_pos = self.robot_interface.get_current_end_effector_position("left")
-            right_pos = self.robot_interface.get_current_end_effector_position("right")
-            
-            # Initialize target positions to current positions (ensure deep copies)
-            self.left_arm.target_position = left_pos.copy()
-            self.left_arm.goal_position = left_pos.copy()
-            self.right_arm.target_position = right_pos.copy()
-            self.right_arm.goal_position = right_pos.copy()
-            
-            # Get current wrist roll angles
-            left_angles = self.robot_interface.get_arm_angles("left")
-            right_angles = self.robot_interface.get_arm_angles("right")
-            
-            self.left_arm.current_wrist_roll = left_angles[WRIST_ROLL_INDEX]
-            self.right_arm.current_wrist_roll = right_angles[WRIST_ROLL_INDEX]
-            
-            self.left_arm.current_wrist_flex = left_angles[WRIST_FLEX_INDEX]
-            self.right_arm.current_wrist_flex = right_angles[WRIST_FLEX_INDEX]
-            
-            logger.info(f"Initialized left arm at position: {left_pos.round(3)}")
-            logger.info(f"Initialized right arm at position: {right_pos.round(3)}")
+        if not self.robot_interface:
+            return
+
+        for arm_name, arm_state in [("left", self.left_arm), ("right", self.right_arm)]:
+            if not self.robot_interface.get_arm_connection_status(arm_name):
+                logger.info(f"Skipping {arm_name} arm initialization (not connected)")
+                continue
+
+            pos = self.robot_interface.get_current_end_effector_position(arm_name)
+            arm_state.target_position = pos.copy()
+            arm_state.goal_position = pos.copy()
+
+            angles = self.robot_interface.get_arm_angles(arm_name)
+            arm_state.current_wrist_roll = angles[WRIST_ROLL_INDEX]
+            arm_state.current_wrist_flex = angles[WRIST_FLEX_INDEX]
+
+            logger.info(f"Initialized {arm_name} arm at position: {pos.round(3)}")
     
     async def _process_commands(self):
         """Process commands from the command queue."""
@@ -290,8 +284,21 @@ class ControlLoop:
         else:
             logger.warning(f"Unknown command: {action}")
 
+    def _resolve_arm(self, requested_arm: str) -> str:
+        """Resolve arm name, remapping to the connected arm in single-arm mode."""
+        if not self.robot_interface:
+            return requested_arm
+        left_ok = self.robot_interface.left_arm_connected
+        right_ok = self.robot_interface.right_arm_connected
+        if left_ok and not right_ok:
+            return "left"
+        if right_ok and not left_ok:
+            return "right"
+        return requested_arm
+
     async def _execute_goal(self, goal: ControlGoal):
         """Execute a control goal."""
+        goal.arm = self._resolve_arm(goal.arm)
         arm_state = self.left_arm if goal.arm == "left" else self.right_arm
         
         # Handle special reset signal from keyboard idle timeout
@@ -439,12 +446,13 @@ class ControlLoop:
         if not self.visualizer:
             return
         
-        # Update robot poses for both arms using ACTUAL angles from robot hardware
-        left_angles = self.robot_interface.get_actual_arm_angles("left")
-        right_angles = self.robot_interface.get_actual_arm_angles("right")
-        
-        self.visualizer.update_robot_pose(left_angles, 'left')
-        self.visualizer.update_robot_pose(right_angles, 'right')
+        # Update robot poses for connected arms using ACTUAL angles from robot hardware
+        if self.robot_interface.left_arm_connected:
+            left_angles = self.robot_interface.get_actual_arm_angles("left")
+            self.visualizer.update_robot_pose(left_angles, 'left')
+        if self.robot_interface.right_arm_connected:
+            right_angles = self.robot_interface.get_actual_arm_angles("right")
+            self.visualizer.update_robot_pose(right_angles, 'right')
         
         # Update visualization markers
         if self.left_arm.mode == ControlMode.POSITION_CONTROL:
@@ -499,9 +507,12 @@ class ControlLoop:
                 active_arms.append("RIGHT")
             
             if active_arms and self.robot_interface:
-                left_angles = self.robot_interface.get_arm_angles("left")
-                right_angles = self.robot_interface.get_arm_angles("right")
-                logger.info(f"🤖 Active control: {', '.join(active_arms)} | Left: {left_angles.round(1)} | Right: {right_angles.round(1)}")
+                parts = [f"🤖 Active control: {', '.join(active_arms)}"]
+                if self.robot_interface.left_arm_connected:
+                    parts.append(f"Left: {self.robot_interface.get_arm_angles('left').round(1)}")
+                if self.robot_interface.right_arm_connected:
+                    parts.append(f"Right: {self.robot_interface.get_arm_angles('right').round(1)}")
+                logger.info(" | ".join(parts))
     
     @property
     def status(self) -> Dict:

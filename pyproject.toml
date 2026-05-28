@@ -3,13 +3,14 @@ requires = ["setuptools >= 61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "telegrip"
-version = "1.0.0"
-description = "Teleoperation Control System for the SO100 Robot Arm(s)"
+name = "so101-vr-control"
+version = "2.0.0"
+description = "VR Teleoperation Control for SO-101 Robot Arm"
 authors = [
     {name = "Emil Rofors", email = "emirof@gmail.com"},
+    {name = "GetSet Robotics", email = "getsetrobotics@gmail.com"},
 ]
-keywords = ["robotics", "teleoperation", "vr", "robot-control"]
+keywords = ["robotics", "teleoperation", "vr", "so101", "meta-quest", "robot-control"]
 
 dependencies = [
     "numpy",
@@ -19,6 +20,7 @@ dependencies = [
     "pybullet",
     "scipy",
     "pyyaml",
+    "feetech-servo-sdk",
 ]
 
 requires-python = ">=3.8"
@@ -33,11 +35,11 @@ dev = [
 ]
 
 [project.scripts]
-telegrip = "telegrip.main:main_cli"
+so101-vr = "so101_vr.main:main_cli"
 
 [project.urls]
-Homepage = "https://github.com/your-username/vr_so100_teleoperation"
-Repository = "https://github.com/your-username/vr_so100_teleoperation"
+Homepage = "https://github.com/DipFlip/telegrip"
+Repository = "https://github.com/DipFlip/telegrip"
 
 [tool.setuptools]
-packages = ["telegrip"] 
+packages = ["so101_vr", "so101_vr.core", "so101_vr.inputs"]

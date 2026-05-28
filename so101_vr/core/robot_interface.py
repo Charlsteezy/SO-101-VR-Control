@@ -93,9 +93,9 @@ class RobotInterface:
         self.max_arm_errors = 3  # Allow fewer errors per arm before marking as disconnected
         self.max_general_errors = 8  # Allow more general errors before full disconnection
         
-        # Initial positions for safe shutdown - restored original values
-        self.initial_left_arm = np.array([0, -100, 100, 60, 0, 0])
-        self.initial_right_arm = np.array([0, -100, 100, 60, 0, 0])
+        # Initial positions for safe shutdown (within calibrated motor ranges)
+        self.initial_left_arm = np.array([0, -80, 80, 55, 0, 0])
+        self.initial_right_arm = np.array([0, -80, 80, 55, 0, 0])
     
     def setup_robot_configs(self) -> Tuple[SOFollowerRobotConfig, SOFollowerRobotConfig]:
         """Create robot configurations for both arms."""
@@ -104,15 +104,17 @@ class RobotInterface:
         left_config = SOFollowerRobotConfig(
             port=self.config.follower_ports["left"],
             id="left_follower",
-            use_degrees=True,  # Use degrees for easier debugging
-            disable_torque_on_disconnect=True
+            use_degrees=True,
+            disable_torque_on_disconnect=True,
+            max_relative_target=10.0,
         )
 
         right_config = SOFollowerRobotConfig(
             port=self.config.follower_ports["right"],
             id="right_follower",
-            use_degrees=True,  # Use degrees for easier debugging
-            disable_torque_on_disconnect=True
+            use_degrees=True,
+            disable_torque_on_disconnect=True,
+            max_relative_target=10.0,
         )
 
         return left_config, right_config
@@ -137,35 +139,46 @@ class RobotInterface:
             left_config, right_config = self.setup_robot_configs()
             if not should_suppress:
                 logger.info("Connecting to robot...")
-            
+
+            left_enabled = self.config.left_arm_enabled
+            right_enabled = self.config.right_arm_enabled
+
             # Connect left arm
-            try:
-                if should_suppress:
-                    with suppress_stdout_stderr():
+            if left_enabled:
+                try:
+                    if should_suppress:
+                        with suppress_stdout_stderr():
+                            self.left_robot = SOFollower(left_config)
+                            self.left_robot.connect()
+                    else:
                         self.left_robot = SOFollower(left_config)
                         self.left_robot.connect()
-                else:
-                    self.left_robot = SOFollower(left_config)
-                    self.left_robot.connect()
-                self.left_arm_connected = True
-                logger.info("✅ Left arm connected successfully")
-            except Exception as e:
-                logger.error(f"❌ Left arm connection failed: {e}")
+                    self.left_arm_connected = True
+                    logger.info("✅ Left arm connected successfully")
+                except Exception as e:
+                    logger.error(f"❌ Left arm connection failed: {e}")
+                    self.left_arm_connected = False
+            else:
+                logger.info("⏭️ Left arm disabled in config, skipping")
                 self.left_arm_connected = False
-            
-            # Connect right arm  
-            try:
-                if should_suppress:
-                    with suppress_stdout_stderr():
+
+            # Connect right arm
+            if right_enabled:
+                try:
+                    if should_suppress:
+                        with suppress_stdout_stderr():
+                            self.right_robot = SOFollower(right_config)
+                            self.right_robot.connect()
+                    else:
                         self.right_robot = SOFollower(right_config)
                         self.right_robot.connect()
-                else:
-                    self.right_robot = SOFollower(right_config)
-                    self.right_robot.connect()
-                self.right_arm_connected = True
-                logger.info("✅ Right arm connected successfully")
-            except Exception as e:
-                logger.error(f"❌ Right arm connection failed: {e}")
+                    self.right_arm_connected = True
+                    logger.info("✅ Right arm connected successfully")
+                except Exception as e:
+                    logger.error(f"❌ Right arm connection failed: {e}")
+                    self.right_arm_connected = False
+            else:
+                logger.info("⏭️ Right arm disabled in config, skipping")
                 self.right_arm_connected = False
                 
             # Mark as connected if at least one arm is connected
@@ -219,25 +232,77 @@ class RobotInterface:
         except Exception as e:
             logger.error(f"Error reading initial state: {e}")
     
-    def setup_kinematics(self, physics_client, robot_ids: Dict, joint_indices: Dict, 
-                        end_effector_link_indices: Dict, joint_limits_min_deg: np.ndarray, 
+    def _tighten_limits_from_calibration(self):
+        """Tighten URDF joint limits to actual motor calibration ranges.
+
+        The URDF limits are for the generic SO-100 model and are wider than the
+        physical range of a specific servo after calibration.  Using the URDF
+        limits directly can command positions beyond the motor's physical stops,
+        damaging gears.  This method reads the calibration file and clamps the
+        limits to the real measured range with a small safety margin.
+        """
+        import json
+        from pathlib import Path
+
+        STS3215_RESOLUTION = 4095
+        SAFETY_MARGIN_DEG = 5.0
+
+        cal_path = Path.home() / ".cache/huggingface/lerobot/calibration/robots/so_follower/left_follower.json"
+        if not cal_path.exists():
+            logger.warning(f"Calibration file not found at {cal_path}, using URDF limits (may be too wide)")
+            return
+
+        try:
+            with open(cal_path) as f:
+                cal = json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to read calibration: {e}")
+            return
+
+        for i, joint_name in enumerate(JOINT_NAMES):
+            if joint_name not in cal:
+                continue
+            rmin = cal[joint_name]["range_min"]
+            rmax = cal[joint_name]["range_max"]
+            mid = (rmin + rmax) / 2.0
+
+            motor_min_deg = (rmin - mid) * 360.0 / STS3215_RESOLUTION + SAFETY_MARGIN_DEG
+            motor_max_deg = (rmax - mid) * 360.0 / STS3215_RESOLUTION - SAFETY_MARGIN_DEG
+
+            old_min = self.joint_limits_min_deg[i]
+            old_max = self.joint_limits_max_deg[i]
+
+            self.joint_limits_min_deg[i] = max(old_min, motor_min_deg)
+            self.joint_limits_max_deg[i] = min(old_max, motor_max_deg)
+
+            if self.joint_limits_min_deg[i] != old_min or self.joint_limits_max_deg[i] != old_max:
+                logger.info(
+                    f"  {joint_name}: tightened [{old_min:.1f}, {old_max:.1f}] → "
+                    f"[{self.joint_limits_min_deg[i]:.1f}, {self.joint_limits_max_deg[i]:.1f}]"
+                )
+
+    def setup_kinematics(self, physics_client, robot_ids: Dict, joint_indices: Dict,
+                        end_effector_link_indices: Dict, joint_limits_min_deg: np.ndarray,
                         joint_limits_max_deg: np.ndarray):
         """Setup kinematics solvers using PyBullet components for both arms."""
         self.joint_limits_min_deg = joint_limits_min_deg.copy()
         self.joint_limits_max_deg = joint_limits_max_deg.copy()
-        
-        # Setup solvers for both arms
+
+        self._tighten_limits_from_calibration()
+        logger.info("Joint limits tightened to match motor calibration")
+
+        # Use the tightened limits for IK solvers
         for arm in ['left', 'right']:
             self.fk_solvers[arm] = ForwardKinematics(
                 physics_client, robot_ids[arm], joint_indices[arm], end_effector_link_indices[arm]
             )
-            
+
             self.ik_solvers[arm] = IKSolver(
                 physics_client, robot_ids[arm], joint_indices[arm], end_effector_link_indices[arm],
-                joint_limits_min_deg, joint_limits_max_deg, arm_name=arm
+                self.joint_limits_min_deg, self.joint_limits_max_deg, arm_name=arm
             )
-        
-        logger.info("Kinematics solvers initialized for both arms")
+
+        logger.info("Kinematics solvers initialized with calibration-safe limits")
     
     def get_current_end_effector_position(self, arm: str) -> np.ndarray:
         """Get current end effector position for specified arm."""
@@ -255,7 +320,11 @@ class RobotInterface:
             default_position = np.array([0.2, 0.0, 0.15])
             return default_position
     
-    def solve_ik(self, arm: str, target_position: np.ndarray, 
+    # Minimum Z height for end-effector (meters above ground)
+    # Prevents arm from driving into the table/base
+    MIN_EE_Z = 0.03
+
+    def solve_ik(self, arm: str, target_position: np.ndarray,
                  target_orientation: Optional[np.ndarray] = None) -> np.ndarray:
         """Solve inverse kinematics for specified arm."""
         if arm == "left":
@@ -264,11 +333,27 @@ class RobotInterface:
             current_angles = self.right_arm_angles
         else:
             raise ValueError(f"Invalid arm: {arm}")
-        
+
+        # Enforce workspace Z-floor to prevent ground/table collision
+        safe_target = target_position.copy()
+        if safe_target[2] < self.MIN_EE_Z:
+            safe_target[2] = self.MIN_EE_Z
+
         if self.ik_solvers[arm]:
-            return self.ik_solvers[arm].solve(target_position, target_orientation, current_angles)
+            ik_result = self.ik_solvers[arm].solve(safe_target, target_orientation, current_angles)
+
+            # Post-IK collision check: verify all links stay above ground
+            if self.fk_solvers[arm]:
+                test_angles = current_angles.copy()
+                test_angles[:3] = ik_result
+                ee_pos, _ = self.fk_solvers[arm].compute(test_angles)
+                if ee_pos[2] < self.MIN_EE_Z:
+                    logger.warning(f"IK solution would collide with ground (Z={ee_pos[2]:.3f}m), rejecting")
+                    return current_angles[:3]
+
+            return ik_result
         else:
-            return current_angles[:3]  # Return current angles if no IK solver
+            return current_angles[:3]
     
     def clamp_joint_angles(self, joint_angles: np.ndarray) -> np.ndarray:
         """Clamp joint angles to safe limits with margins for problem joints."""
@@ -295,31 +380,41 @@ class RobotInterface:
         # Apply standard joint limits to all joints
         return np.clip(processed_angles, self.joint_limits_min_deg, self.joint_limits_max_deg)
     
+    # Max degrees any joint can change per control step (at 20 Hz = 200 deg/s)
+    MAX_STEP_DEG = 10.0
+
     def update_arm_angles(self, arm: str, ik_angles: np.ndarray, wrist_flex: float, wrist_roll: float, gripper: float):
         """Update joint angles for specified arm with IK solution and direct wrist/gripper control."""
         if arm == "left":
-            target_angles = self.left_arm_angles
+            prev_angles = self.left_arm_angles.copy()
         elif arm == "right":
-            target_angles = self.right_arm_angles
+            prev_angles = self.right_arm_angles.copy()
         else:
             raise ValueError(f"Invalid arm: {arm}")
-        
+
+        target_angles = prev_angles.copy()
+
         # Update first 3 joints with IK solution
         target_angles[:3] = ik_angles
-        
+
         # Set wrist angles directly
         target_angles[3] = wrist_flex
         target_angles[4] = wrist_roll
-        
+
         # Handle gripper separately (clamp to gripper limits)
         target_angles[5] = np.clip(gripper, GRIPPER_OPEN_ANGLE, GRIPPER_CLOSED_ANGLE)
-        
+
         # Apply joint limits to all joints (except gripper which we handle specially)
         clamped_angles = self.clamp_joint_angles(target_angles)
-        
+
         # Preserve gripper control (don't clamp gripper if it was set intentionally)
         clamped_angles[5] = target_angles[5]
-        
+
+        # Velocity limiting: cap per-step change to prevent violent motions
+        delta = clamped_angles - prev_angles
+        delta = np.clip(delta, -self.MAX_STEP_DEG, self.MAX_STEP_DEG)
+        clamped_angles = prev_angles + delta
+
         if arm == "left":
             self.left_arm_angles = clamped_angles
         else:

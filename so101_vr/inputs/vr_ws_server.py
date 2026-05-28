@@ -330,6 +330,10 @@ class VRWebSocketServer(BaseInputProvider):
                     controller.z_axis_rotation = self.extract_roll_from_quaternion(controller.accumulated_rotation_quat, controller.origin_quaternion)
                     controller.x_axis_rotation = self.extract_pitch_from_quaternion(controller.accumulated_rotation_quat, controller.origin_quaternion)
                 
+                # Clamp wrist rotations to safe ranges
+                safe_wrist_roll = float(np.clip(-controller.z_axis_rotation, -170.0, 170.0))
+                safe_wrist_flex = float(np.clip(-controller.x_axis_rotation, -90.0, 90.0))
+
                 # Create position control goal
                 # Note: We send relative position here, the control loop will handle
                 # adding it to the robot's current position
@@ -337,8 +341,8 @@ class VRWebSocketServer(BaseInputProvider):
                     arm=hand,
                     mode=ControlMode.POSITION_CONTROL,
                     target_position=relative_delta,  # Relative position delta
-                    wrist_roll_deg=-controller.z_axis_rotation,
-                    wrist_flex_deg=-controller.x_axis_rotation,
+                    wrist_roll_deg=safe_wrist_roll,
+                    wrist_flex_deg=safe_wrist_flex,
                     metadata={
                         "source": "vr_grip",
                         "relative_position": True,

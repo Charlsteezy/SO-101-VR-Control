@@ -134,8 +134,11 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             # Serve image files from web-ui directory
             self.serve_file(f'web-ui{self.path}', 'image/png')
         elif self.path.endswith('.gif'):
-            # Serve image files from web-ui directory
             self.serve_file(f'web-ui{self.path}', 'image/gif')
+        elif self.path.endswith('.svg'):
+            self.serve_file(f'web-ui{self.path}', 'image/svg+xml')
+        elif self.path.endswith('.mp4'):
+            self.serve_file(f'web-ui{self.path}', 'video/mp4')
         else:
             self.send_error(404, "Not found")
     
@@ -774,70 +777,68 @@ def create_signal_handler(system: 'TelegripSystem', loop: asyncio.AbstractEventL
 
 def parse_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Unified SO100 Robot Teleoperation System")
-    
-    # Control flags
-    parser.add_argument("--no-robot", action="store_true", help="Disable robot connection (visualization only)")
-    parser.add_argument("--no-sim", action="store_true", help="Disable PyBullet simulation and inverse kinematics")
-    parser.add_argument("--no-viz", action="store_true", help="Disable PyBullet visualization (headless mode)")
+    parser = argparse.ArgumentParser(
+        prog="so101-vr",
+        description="SO-101 VR Control v2.0 — Single-arm teleoperation via Meta Quest"
+    )
+
+    parser.add_argument("--port", help="SO-101 serial port (e.g. /dev/ttyACM0)")
+    parser.add_argument("--no-robot", action="store_true", help="Disable robot connection (simulation only)")
     parser.add_argument("--no-vr", action="store_true", help="Disable VR WebSocket server")
     parser.add_argument("--no-keyboard", action="store_true", help="Disable keyboard input")
-    parser.add_argument("--no-https", action="store_true", help="Disable HTTPS server")
-    parser.add_argument("--autoconnect", action="store_true", help="Automatically connect to robot motors on startup")
-    parser.add_argument("--log-level", default="warning", 
+    parser.add_argument("--autoconnect", action="store_true", help="Auto-engage motors on startup")
+    parser.add_argument("--log-level", default="warning",
                        choices=["debug", "info", "warning", "error", "critical"],
                        help="Set logging level (default: warning)")
-    
-    # Network settings
     parser.add_argument("--https-port", type=int, default=8443, help="HTTPS server port")
     parser.add_argument("--ws-port", type=int, default=8442, help="WebSocket server port")
     parser.add_argument("--host", default="0.0.0.0", help="Host IP address")
-    
-    # Paths
-    parser.add_argument("--urdf", default="URDF/SO100/so100.urdf", help="Path to robot URDF file")
-    parser.add_argument("--webapp", default="webapp", help="Path to webapp directory")
-    parser.add_argument("--cert", default="cert.pem", help="Path to SSL certificate")
-    parser.add_argument("--key", default="key.pem", help="Path to SSL private key")
-    
-    # Robot settings
     parser.add_argument("--config", default="config.yaml", help="Path to config file")
-    parser.add_argument("--left-port", help="Left arm serial port (overrides config file)")
-    parser.add_argument("--right-port", help="Right arm serial port (overrides config file)")
-    
+
+    # Hidden/advanced options kept for compatibility
+    parser.add_argument("--left-port", help=argparse.SUPPRESS)
+    parser.add_argument("--right-port", help=argparse.SUPPRESS)
+    parser.add_argument("--no-sim", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-viz", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-https", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--urdf", default="URDF/SO100/so100.urdf", help=argparse.SUPPRESS)
+    parser.add_argument("--webapp", default="webapp", help=argparse.SUPPRESS)
+    parser.add_argument("--cert", default="cert.pem", help=argparse.SUPPRESS)
+    parser.add_argument("--key", default="key.pem", help=argparse.SUPPRESS)
+
     return parser.parse_args()
 
 
 def create_config_from_args(args) -> TelegripConfig:
     """Create configuration object from command line arguments."""
-    # First load the config file
     config_data = get_config_data()
     config = TelegripConfig()
-    
-    # Apply command line overrides
+
     config.enable_robot = not args.no_robot
     config.enable_pybullet = not args.no_sim
-    config.enable_pybullet_gui = config.enable_pybullet and not args.no_viz
+    config.enable_pybullet_gui = False  # always headless for single-arm VR
     config.enable_vr = not args.no_vr
     config.enable_keyboard = not args.no_keyboard
     config.autoconnect = args.autoconnect
     config.log_level = args.log_level
-    
+
     config.https_port = args.https_port
     config.websocket_port = args.ws_port
     config.host_ip = args.host
-    
+
     config.urdf_path = args.urdf
     config.webapp_dir = args.webapp
     config.certfile = args.cert
     config.keyfile = args.key
-    
-    # Handle port configuration - use command line args if provided, otherwise use config file values
-    if args.left_port or args.right_port:
+
+    # --port is the primary flag; --left-port kept for compat
+    arm_port = args.port or args.left_port
+    if arm_port:
         config.follower_ports = {
-            "left": args.left_port if args.left_port else config_data["robot"]["left_arm"]["port"],
-            "right": args.right_port if args.right_port else config_data["robot"]["right_arm"]["port"]
+            "left": arm_port,
+            "right": config_data["robot"]["right_arm"]["port"]
         }
-    
+
     return config
 
 
@@ -892,11 +893,13 @@ async def main():
     else:
         # Show clean startup message with HTTPS URL
         host_display = get_local_ip() if config.host_ip == "0.0.0.0" else config.host_ip
-        print(f"🤖 telegrip starting...")
-        print(f"📱 Open the UI in your browser on:")
-        print(f"   https://{host_display}:{config.https_port}")
-        print(f"📱 Then go to the same address on your VR headset browser")
-        print(f"💡 Use --log-level info to see detailed output")
+        print(f"")
+        print(f"  SO-101 VR Control v2.0.0")
+        print(f"  ========================")
+        print(f"  Dashboard:  https://{host_display}:{config.https_port}")
+        print(f"  Quest URL:  https://{host_display}:{config.https_port}")
+        print(f"  WebSocket:  wss://{host_display}:{config.websocket_port}")
+        print(f"")
         print()
     
     # Create and start teleoperation system

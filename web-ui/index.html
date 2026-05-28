@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>telegrip - Robot Arm Teleoperation</title>
-    <meta name="description" content="telegrip - Robot Arm Teleoperation">
+    <title>VR Control for SO-101</title>
+    <meta name="description" content="VR Teleoperation Control for SO-101 Robot Arm">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="https://aframe.io/releases/1.7.1/aframe.min.js"></script>
     <script src="vr_app.js" defer></script>
@@ -13,44 +13,32 @@
   <body>
     <!-- Settings Button -->
     <div class="settings-button" onclick="openSettings()">
-      ⚙️
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </div>
 
     <!-- Settings Modal -->
     <div class="settings-modal" id="settingsModal">
       <div class="settings-content">
         <div class="settings-header">
-          <div class="settings-title">System Configuration</div>
-          <button class="close-button" onclick="closeSettings()">×</button>
+          <div class="settings-title">Configuration</div>
+          <button class="close-button" onclick="closeSettings()">&times;</button>
         </div>
-        
         <form id="settingsForm">
           <div class="settings-section">
-            <h3>🤖 Robot Arms</h3>
+            <h3>Robot Arm</h3>
             <div class="form-row">
               <div class="form-group">
-                <label for="leftArmName">Left Arm Name</label>
+                <label for="leftArmName">Arm Name</label>
                 <input type="text" id="leftArmName" name="leftArmName">
               </div>
               <div class="form-group">
-                <label for="leftArmPort">Left Arm Port</label>
+                <label for="leftArmPort">Serial Port</label>
                 <input type="text" id="leftArmPort" name="leftArmPort" placeholder="/dev/ttyACM0">
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label for="rightArmName">Right Arm Name</label>
-                <input type="text" id="rightArmName" name="rightArmName">
-              </div>
-              <div class="form-group">
-                <label for="rightArmPort">Right Arm Port</label>
-                <input type="text" id="rightArmPort" name="rightArmPort" placeholder="/dev/ttyACM1">
-              </div>
-            </div>
           </div>
-
           <div class="settings-section">
-            <h3>🌐 Network Settings</h3>
+            <h3>Network</h3>
             <div class="form-row">
               <div class="form-group">
                 <label for="httpsPort">HTTPS Port</label>
@@ -61,17 +49,12 @@
                 <input type="number" id="websocketPort" name="websocketPort" min="1024" max="65535">
               </div>
             </div>
-            <div class="form-group">
-              <label for="hostIp">Host IP Address</label>
-              <input type="text" id="hostIp" name="hostIp" placeholder="0.0.0.0">
-            </div>
           </div>
-
           <div class="settings-section">
-            <h3>🎮 Control Parameters</h3>
+            <h3>Control</h3>
             <div class="form-row">
               <div class="form-group">
-                <label for="vrScale">VR Scale Factor</label>
+                <label for="vrScale">VR Scale</label>
                 <input type="number" id="vrScale" name="vrScale" step="0.1" min="0.1" max="5.0">
               </div>
               <div class="form-group">
@@ -79,210 +62,178 @@
                 <input type="number" id="sendInterval" name="sendInterval" step="1" min="10" max="200">
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label for="posStep">Position Step (m)</label>
-                <input type="number" id="posStep" name="posStep" step="0.001" min="0.001" max="0.1">
-              </div>
-              <div class="form-group">
-                <label for="angleStep">Angle Step (degrees)</label>
-                <input type="number" id="angleStep" name="angleStep" step="0.5" min="0.5" max="45">
-              </div>
-            </div>
           </div>
-
           <div class="button-row">
-            <button type="submit" class="save-button" id="saveButton">
-              💾 Save Configuration
-            </button>
-            <button type="button" class="restart-button" id="restartButton" onclick="restartSystem()">
-              🔄 Restart System
-            </button>
+            <button type="submit" class="save-button" id="saveButton">Save</button>
+            <button type="button" class="restart-button" id="restartButton" onclick="restartSystem()">Restart</button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- Desktop Interface -->
+    <!-- Main Interface -->
     <div class="desktop-interface" id="desktopInterface">
-      <div class="desktop-header">
-        <div class="desktop-title">telegrip</div>
-        <div class="desktop-subtitle">Dual-arm robot control via VR controllers and keyboard</div>
-        
-        <div class="status-section">
-          <h2>🤖 Robot Status</h2>
-          <div class="status-grid">
-            <div class="status-item">
-              <div class="status-indicator" id="leftArmStatus"></div>
-              <span>Left Arm</span>
+
+      <!-- Header -->
+      <header class="app-header">
+        <div class="header-inner">
+          <div class="logo-area">
+            <div class="logo-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
             </div>
-            <div class="status-item">
-              <div class="status-indicator" id="rightArmStatus"></div>
-              <span>Right Arm</span>
-            </div>
-            <div class="status-item">
-              <div class="status-indicator" id="vrStatus"></div>
-              <span>VR Connected</span>
+            <div>
+              <h1 class="app-title">VR Control for SO-101</h1>
+              <p class="app-subtitle">Single-arm teleoperation via Meta Quest</p>
             </div>
           </div>
-          
-          <!-- Robot Engagement Controls -->
-          <div class="robot-controls">
-            <button id="robotEngageBtn" class="engage-btn" onclick="toggleRobotEngagement()">
-              <span id="engageBtnText">🔌 Connect Robot</span>
-            </button>
-            <div class="engagement-status">
-              <span id="engagementStatusText">Motors Disengaged</span>
+          <div class="header-status">
+            <div class="status-pill" id="armPill">
+              <span class="pill-dot" id="leftArmStatus"></span>
+              <span>SO-101</span>
             </div>
-            <div class="connection-hint" id="connectionHint">Click Connect to start telegrip</div>
-            <div class="connection-warning" id="connectionWarning">
-              ⚠️ The arms are not engaged until you click Connect
+            <div class="status-pill" id="vrPill">
+              <span class="pill-dot" id="vrStatus"></span>
+              <span>VR</span>
             </div>
           </div>
+        </div>
+      </header>
+
+      <!-- Content -->
+      <main class="main-content">
+        <!-- Left Column -->
+        <div class="col-left">
+
+          <!-- Connect Card -->
+          <div class="card">
+            <div class="card-body connect-card-body">
+              <button id="robotEngageBtn" class="engage-btn" onclick="toggleRobotEngagement()">
+                <span id="engageBtnText">Connect Robot</span>
+              </button>
+              <p class="engage-status" id="engagementStatusText">Motors Disengaged</p>
+              <div class="connection-warning" id="connectionWarning">
+                Arm is not engaged until you click Connect
+              </div>
+            </div>
+          </div>
+
+          <!-- VR Setup Card -->
+          <div class="card">
+            <div class="card-header"><h2>How to Connect</h2></div>
+            <div class="card-body">
+              <ol class="steps">
+                <li>
+                  <strong>Open on Quest</strong>
+                  <span>Go to <code id="vrServerUrl">https://loading...</code></span>
+                </li>
+                <li>
+                  <strong>Connect Robot</strong>
+                  <span>Click the green button above</span>
+                </li>
+                <li>
+                  <strong>Enter VR</strong>
+                  <span>Tap "Start" on the Quest page</span>
+                </li>
+              </ol>
+            </div>
+          </div>
+
+          <!-- Keyboard Card -->
+          <div class="card keyboard-card" id="keyboardCard">
+            <div class="card-header">
+              <h2>Keyboard</h2>
+              <button class="toggle-btn" id="keyboardToggleBtn" onclick="toggleKeyboardControl()">
+                <span id="keyboardToggleText">Enable</span>
+              </button>
+            </div>
+            <div class="card-body keyboard-body" id="keyboardBody">
+              <div class="key-grid">
+                <div class="key-row"><kbd>W</kbd> <kbd>S</kbd> <span>Forward / Back</span></div>
+                <div class="key-row"><kbd>A</kbd> <kbd>D</kbd> <span>Left / Right</span></div>
+                <div class="key-row"><kbd>Q</kbd> <kbd>E</kbd> <span>Down / Up</span></div>
+                <div class="key-row"><kbd>Z</kbd> <kbd>X</kbd> <span>Wrist Roll</span></div>
+                <div class="key-row"><kbd>F</kbd> <span></span> <span>Gripper</span></div>
+                <div class="key-row"><kbd>ESC</kbd> <span></span> <span>Stop</span></div>
+              </div>
+            </div>
+          </div>
+
         </div>
 
-        <!-- VR Instructions Section -->
-        <div class="vr-instructions-section">
-          <h2>🥽 VR Controller Instructions</h2>
-          <div class="instructions-content">
-            <div class="instructions-image">
-              <img src="media/telegrip_instructions.jpg" alt="VR Controller Instructions" style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-            </div>
-            <div class="instructions-text">
-              <div class="instruction-item">
-                <strong>Setup:</strong> Go to <span id="vrServerUrl" style="font-family: monospace; background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px;">https://loading...</span> in your headset's browser and click "Start"
-              </div>
-              <div class="instruction-item grip-button">
-                <strong>Grip Button:</strong> The robot arm's gripper tip will track your relative controller movements as long as you hold the grip button
-              </div>
-              <div class="instruction-item trigger-button">
-                <strong>Trigger Button:</strong> The gripper stays closed while you hold the trigger button. Release the trigger button to open the gripper.
-              </div>
-              <div class="instruction-item">
-                <strong>Controller Orientation:</strong> Roll and pitch of your controller will be matched on the wrist joint of the robot arm
-              </div>
-            </div>
-          </div>
-          <div style="margin-top: 15px; text-align: center;">
-            <button id="switchToVrView" onclick="switchToVrView()" style="background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.4); color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px;">
-              🥽 Switch to VR View
-            </button>
-          </div>
-        </div>
-      </div>
+        <!-- Right Column -->
+        <div class="col-right">
 
-      <div class="keyboard-help">
-        <!-- Collapsed state: just the enable button -->
-        <div class="keyboard-help-collapsed">
-          <div class="control-toggle" id="keyboardToggle" onclick="toggleKeyboardControl()">
-            <span>🎮</span>
-            <span id="keyboardToggleText">Enable Keyboard Control</span>
-          </div>
-        </div>
-        
-        <!-- Expanded state: title, disable button, and content -->
-        <div class="keyboard-help-expanded">
-          <div class="keyboard-help-header">
-            <div class="control-toggle active" onclick="toggleKeyboardControl()">
-              <span>🎮</span>
-              <span>Disable Keyboard Control</span>
-            </div>
-            <div class="help-title">
-              <span>⌨️</span>
-              Keyboard Controls
-            </div>
-          </div>
-          
-          <div class="help-columns">
-            <div class="help-column">
-              <h4>Left Arm</h4>
-              <div class="key-group">
-                <div class="key-row">
-                  <span><kbd class="key">W</kbd> / <kbd class="key">S</kbd></span>
-                  <span class="key-desc">Forward / Backward</span>
+          <!-- Controller Mapping Card -->
+          <div class="card">
+            <div class="card-header"><h2>VR Controller</h2></div>
+            <div class="card-body">
+              <div class="ctrl-grid">
+                <div class="ctrl-row">
+                  <span class="ctrl-badge grip">GRIP</span>
+                  <div>
+                    <strong>Move Arm</strong>
+                    <p>Hold grip &mdash; end-effector tracks your hand. Release to stop.</p>
+                  </div>
                 </div>
-                <div class="key-row">
-                  <span><kbd class="key">A</kbd> / <kbd class="key">D</kbd></span>
-                  <span class="key-desc">Left / Right</span>
+                <div class="ctrl-row">
+                  <span class="ctrl-badge trigger">TRIGGER</span>
+                  <div>
+                    <strong>Gripper</strong>
+                    <p>Hold trigger to close. Release to open.</p>
+                  </div>
                 </div>
-                <div class="key-row">
-                  <span><kbd class="key">Q</kbd> / <kbd class="key">E</kbd></span>
-                  <span class="key-desc">Down / Up</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">Z</kbd> / <kbd class="key">X</kbd></span>
-                  <span class="key-desc">Wrist Roll</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">F</kbd></span>
-                  <span class="key-desc">Toggle Gripper</span>
+                <div class="ctrl-row">
+                  <span class="ctrl-badge wrist">WRIST</span>
+                  <div>
+                    <strong>Orientation</strong>
+                    <p>Roll &amp; pitch of your controller maps to wrist joints.</p>
+                  </div>
                 </div>
               </div>
-            </div>
-            
-            <div class="help-column">
-              <h4>Right Arm</h4>
-              <div class="key-group">
-                <div class="key-row">
-                  <span><kbd class="key">I</kbd> / <kbd class="key">K</kbd></span>
-                  <span class="key-desc">Forward / Backward</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">J</kbd> / <kbd class="key">L</kbd></span>
-                  <span class="key-desc">Left / Right</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">U</kbd> / <kbd class="key">O</kbd></span>
-                  <span class="key-desc">Up / Down</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">N</kbd> / <kbd class="key">M</kbd></span>
-                  <span class="key-desc">Wrist Roll</span>
-                </div>
-                <div class="key-row">
-                  <span><kbd class="key">;</kbd></span>
-                  <span class="key-desc">Toggle Gripper</span>
-                </div>
+              <div class="card-footer">
+                <button onclick="switchToVrView()" class="link-btn">Switch to VR View &rarr;</button>
               </div>
             </div>
           </div>
-          
-          <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #bdc3c7; color: #7f8c8d; font-size: 13px;">
-            <strong>Tips:</strong> Position control activates automatically when you press movement keys. 
-            Use <kbd class="key">ESC</kbd> to stop the system.
+
+          <!-- Safety Card -->
+          <div class="card">
+            <div class="card-header"><h2>Safety</h2></div>
+            <div class="card-body">
+              <ul class="safety-list">
+                <li><span class="safe-dot"></span> Joint limits tightened to motor calibration</li>
+                <li><span class="safe-dot"></span> Velocity limited to 200&deg;/s (10&deg;/step)</li>
+                <li><span class="safe-dot"></span> Ground collision prevention (Z-floor check)</li>
+                <li><span class="safe-dot"></span> LeRobot max_relative_target = 10&deg;</li>
+              </ul>
+            </div>
           </div>
+
         </div>
-      </div>
+      </main>
     </div>
 
-    <!-- VR-only content (hidden - using custom start button instead) -->
+    <!-- VR-only content -->
     <div class="vr-content" id="vrContent" style="display: none;">
-      <div class="vr-title">VR Teleoperation</div>
+      <div class="vr-title">VR Control for SO-101</div>
     </div>
 
     <!-- A-Frame VR Scene -->
     <a-scene vr-mode-ui="enabled: false;">
-      <!-- Passthrough setup -->
       <a-entity webxr-passthrough="referenceSpaceType: local-floor"></a-entity>
-
-      <!-- Controllers -->
       <a-entity id="leftHand" oculus-touch-controls="hand: left">
-        <a-text id="leftHandInfo" value="Pos: ...\nRot: ..." position="0 0.04 -0.05" rotation="0 0 0" scale="0.05 0.05 0.05" color="white" align="center"></a-text>
+        <a-text id="leftHandInfo" value="" position="0 0.04 -0.05" scale="0.05 0.05 0.05" color="white" align="center"></a-text>
       </a-entity>
       <a-entity id="rightHand" oculus-touch-controls="hand: right">
-        <a-text id="rightHandInfo" value="Pos: ...\nRot: ..." position="0 0.04 -0.05" rotation="0 0 0" scale="0.05 0.05 0.05" color="white" align="center"></a-text>
+        <a-text id="rightHandInfo" value="" position="0 0.04 -0.05" scale="0.05 0.05 0.05" color="white" align="center"></a-text>
       </a-entity>
     </a-scene>
 
     <script>
-      // Update VR server URL dynamically
       document.addEventListener('DOMContentLoaded', function() {
-        const vrUrlElement = document.getElementById('vrServerUrl');
-        if (vrUrlElement) {
-          const currentUrl = window.location.origin;
-          vrUrlElement.textContent = currentUrl + '/';
-        }
+        const el = document.getElementById('vrServerUrl');
+        if (el) el.textContent = window.location.origin + '/';
       });
     </script>
   </body>
-</html> 
+</html>

@@ -211,7 +211,11 @@ class TelegripConfig:
     
     # Device ports
     follower_ports: Dict[str, str] = None
-    
+
+    # Arm enable flags
+    left_arm_enabled: bool = True
+    right_arm_enabled: bool = True
+
     # Control flags
     enable_pybullet: bool = True
     enable_pybullet_gui: bool = True
@@ -248,12 +252,16 @@ class TelegripConfig:
                 "left": _config_data["robot"]["left_arm"]["port"],
                 "right": _config_data["robot"]["right_arm"]["port"]
             }
-        
+
         # Ensure ports are not None
         if self.follower_ports["left"] is None:
             self.follower_ports["left"] = "/dev/ttyACM0"
         if self.follower_ports["right"] is None:
             self.follower_ports["right"] = "/dev/ttyACM1"
+
+        # Read arm enabled flags from config data
+        self.left_arm_enabled = _config_data["robot"]["left_arm"].get("enabled", True)
+        self.right_arm_enabled = _config_data["robot"]["right_arm"].get("enabled", True)
     
     @property
     def ssl_files_exist(self) -> bool:

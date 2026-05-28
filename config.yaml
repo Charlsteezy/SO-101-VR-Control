@@ -26,12 +26,12 @@ paths:
 robot:
   left_arm:
     enabled: true
-    name: Left Arm
-    port: /dev/ttySO100blue
+    name: SO-101 Arm
+    port: /dev/ttyACM0
   right_arm:
-    enabled: true
+    enabled: false
     name: Right Arm
-    port: /dev/ttySO100red
+    port: /dev/ttyACM_NONE
   send_interval: 0.05
   vr_to_robot_scale: 1
 ssl:

@@ -4,587 +4,326 @@ let isRobotEngaged = false;
 let currentConfig = {};
 let warningTimeout = null;
 
-// Settings modal functions
+// Settings modal
 function openSettings() {
-  const modal = document.getElementById('settingsModal');
-  modal.classList.add('show');
+  document.getElementById('settingsModal').classList.add('show');
   loadConfiguration();
 }
 
 function closeSettings() {
-  const modal = document.getElementById('settingsModal');
-  modal.classList.remove('show');
+  document.getElementById('settingsModal').classList.remove('show');
 }
 
 function loadConfiguration() {
   fetch('/api/config')
-    .then(response => response.json())
+    .then(r => r.json())
     .then(config => {
       currentConfig = config;
       populateSettingsForm(config);
     })
-    .catch(error => {
-      console.error('Error loading configuration:', error);
-      alert('Error loading configuration');
-    });
+    .catch(() => {});
 }
 
 function populateSettingsForm(config) {
-  // Robot arms
   document.getElementById('leftArmName').value = config.robot?.left_arm?.name || '';
   document.getElementById('leftArmPort').value = config.robot?.left_arm?.port || '';
-  document.getElementById('rightArmName').value = config.robot?.right_arm?.name || '';
-  document.getElementById('rightArmPort').value = config.robot?.right_arm?.port || '';
-  
-  // Network settings
   document.getElementById('httpsPort').value = config.network?.https_port || '';
   document.getElementById('websocketPort').value = config.network?.websocket_port || '';
-  document.getElementById('hostIp').value = config.network?.host_ip || '';
-  
-  // Control parameters
   document.getElementById('vrScale').value = config.robot?.vr_to_robot_scale || '';
-  document.getElementById('sendInterval').value = (config.robot?.send_interval * 1000) || ''; // Convert to ms
-  document.getElementById('posStep').value = config.control?.keyboard?.pos_step || '';
-  document.getElementById('angleStep').value = config.control?.keyboard?.angle_step || '';
+  document.getElementById('sendInterval').value = (config.robot?.send_interval * 1000) || '';
 }
 
 function restartSystem() {
-  if (!confirm('Are you sure you want to restart the system? This will temporarily disconnect all devices.')) {
-    return;
-  }
+  if (!confirm('Restart the system? This will temporarily disconnect.')) return;
+  const btn = document.getElementById('restartButton');
+  btn.disabled = true;
+  btn.textContent = 'Restarting...';
 
-  const restartButton = document.getElementById('restartButton');
-  restartButton.disabled = true;
-  restartButton.textContent = 'Restarting...';
-
-  fetch('/api/restart', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  })
-  .then(response => {
-    if (response.ok) {
-      // Show restart message and close modal
-      alert('System is restarting... The page will reload automatically in a few seconds.');
-      closeSettings();
-      
-      // Try to reconnect after a delay
-      setTimeout(() => {
-        window.location.reload();
-      }, 5000);
-    } else {
-      alert('Failed to restart system. Please restart manually.');
-    }
-  })
-  .catch(error => {
-    console.error('Error restarting system:', error);
-    alert('Error communicating with server. Please restart manually.');
-  })
-  .finally(() => {
-    restartButton.disabled = false;
-    restartButton.textContent = '🔄 Restart System';
-  });
+  fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    .then(r => {
+      if (r.ok) {
+        closeSettings();
+        setTimeout(() => window.location.reload(), 5000);
+      }
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Restart';
+    });
 }
 
 function saveConfiguration() {
   const form = document.getElementById('settingsForm');
-  const formData = new FormData(form);
-  
-  // Build config object
+  const fd = new FormData(form);
+
   const updatedConfig = {
     robot: {
-      left_arm: {
-        name: formData.get('leftArmName'),
-        port: formData.get('leftArmPort'),
-        enabled: true
-      },
-      right_arm: {
-        name: formData.get('rightArmName'),
-        port: formData.get('rightArmPort'),
-        enabled: true
-      },
-      vr_to_robot_scale: parseFloat(formData.get('vrScale')),
-      send_interval: parseFloat(formData.get('sendInterval')) / 1000 // Convert from ms
+      left_arm: { name: fd.get('leftArmName'), port: fd.get('leftArmPort'), enabled: true },
+      right_arm: { name: 'Disabled', port: '/dev/ttyACM_NONE', enabled: false },
+      vr_to_robot_scale: parseFloat(fd.get('vrScale')),
+      send_interval: parseFloat(fd.get('sendInterval')) / 1000
     },
     network: {
-      https_port: parseInt(formData.get('httpsPort')),
-      websocket_port: parseInt(formData.get('websocketPort')),
-      host_ip: formData.get('hostIp')
-    },
-    control: {
-      keyboard: {
-        pos_step: parseFloat(formData.get('posStep')),
-        angle_step: parseFloat(formData.get('angleStep'))
-      }
+      https_port: parseInt(fd.get('httpsPort')),
+      websocket_port: parseInt(fd.get('websocketPort'))
     }
   };
 
-  const saveButton = document.getElementById('saveButton');
-  saveButton.disabled = true;
-  saveButton.textContent = 'Saving...';
+  const btn = document.getElementById('saveButton');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
 
   fetch('/api/config', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updatedConfig)
   })
-  .then(response => response.json())
-  .then(data => {
-    if (data.success) {
-      alert('Configuration saved successfully! Use the restart button to apply changes.');
-    } else {
-      alert('Failed to save configuration: ' + (data.error || 'Unknown error'));
-    }
-  })
-  .catch(error => {
-    console.error('Error saving configuration:', error);
-    alert('Error saving configuration');
-  })
-  .finally(() => {
-    saveButton.disabled = false;
-    saveButton.textContent = '💾 Save Configuration';
-  });
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) alert('Saved. Use Restart to apply.');
+    })
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = 'Save';
+    });
 }
 
-// Update status indicators
+// Status polling
 function updateStatus() {
   fetch('/api/status')
-    .then(response => response.json())
+    .then(r => r.json())
     .then(data => {
-      // Update arm connection indicators (based on device files)
-      const leftIndicator = document.getElementById('leftArmStatus');
-      const rightIndicator = document.getElementById('rightArmStatus');
-      const vrIndicator = document.getElementById('vrStatus');
-      
-      leftIndicator.className = 'status-indicator' + (data.left_arm_connected ? ' connected' : '');
-      rightIndicator.className = 'status-indicator' + (data.right_arm_connected ? ' connected' : '');
-      vrIndicator.className = 'status-indicator' + (data.vrConnected ? ' connected' : '');
-      
-      // Update keyboard control status
+      const armOk = data.left_arm_connected || data.right_arm_connected;
+      document.getElementById('leftArmStatus').className = 'status-indicator' + (armOk ? ' connected' : '');
+      document.getElementById('vrStatus').className = 'status-indicator' + (data.vrConnected ? ' connected' : '');
+
       isKeyboardEnabled = data.keyboardEnabled;
-      const keyboardHelp = document.querySelector('.keyboard-help');
-      
+      const kbCard = document.querySelector('.keyboard-card');
+      const kbBtn = document.getElementById('keyboardToggleBtn');
+      const kbText = document.getElementById('keyboardToggleText');
       if (isKeyboardEnabled) {
-        if (keyboardHelp) keyboardHelp.classList.add('active');
+        kbCard.classList.add('active');
+        kbBtn.classList.add('active');
+        kbText.textContent = 'Disable';
       } else {
-        if (keyboardHelp) keyboardHelp.classList.remove('active');
+        kbCard.classList.remove('active');
+        kbBtn.classList.remove('active');
+        kbText.textContent = 'Enable';
       }
-      
-      // Update robot engagement status
+
       if (data.robotEngaged !== undefined) {
         isRobotEngaged = data.robotEngaged;
         updateEngagementUI();
       }
     })
-    .catch(error => {
-      console.error('Error fetching status:', error);
-    });
+    .catch(() => {});
 }
 
 function updateEngagementUI() {
-  const engageBtn = document.getElementById('robotEngageBtn');
-  const engageBtnText = document.getElementById('engageBtnText');
-  const engagementStatusText = document.getElementById('engagementStatusText');
-  const connectionHint = document.getElementById('connectionHint');
-  const connectionWarning = document.getElementById('connectionWarning');
+  const btn = document.getElementById('robotEngageBtn');
+  const text = document.getElementById('engageBtnText');
+  const status = document.getElementById('engagementStatusText');
+  const warn = document.getElementById('connectionWarning');
 
   if (isRobotEngaged) {
-    engageBtn.classList.add('disconnect');
-    engageBtn.classList.remove('needs-attention');
-    engageBtnText.textContent = '🔌 Disconnect Robot';
-    engagementStatusText.textContent = 'Motors Engaged';
-    engagementStatusText.style.color = '#FFFFFF';
-    if (connectionHint) connectionHint.style.display = 'none';
-    if (connectionWarning) connectionWarning.classList.remove('show');
+    btn.classList.add('disconnect');
+    btn.classList.remove('needs-attention');
+    text.textContent = 'Disconnect Robot';
+    status.textContent = 'Motors Engaged';
+    status.style.color = 'var(--accent)';
+    if (warn) warn.classList.remove('show');
   } else {
-    engageBtn.classList.remove('disconnect');
-    engageBtnText.textContent = '🔌 Connect Robot';
-    engagementStatusText.textContent = 'Motors Disengaged';
-    engagementStatusText.style.color = '#FFFFFF';
-    if (connectionHint) connectionHint.style.display = 'block';
+    btn.classList.remove('disconnect');
+    text.textContent = 'Connect Robot';
+    status.textContent = 'Motors Disengaged';
+    status.style.color = 'var(--text-muted)';
   }
 }
 
 function showConnectionWarning() {
-  const engageBtn = document.getElementById('robotEngageBtn');
-  const connectionWarning = document.getElementById('connectionWarning');
-
+  const btn = document.getElementById('robotEngageBtn');
+  const warn = document.getElementById('connectionWarning');
   if (!isRobotEngaged) {
-    // Add pulsing animation to the connect button
-    engageBtn.classList.add('needs-attention');
-
-    // Show the warning message
-    if (connectionWarning) {
-      connectionWarning.classList.add('show');
-    }
-
-    // Clear any existing timeout
-    if (warningTimeout) {
-      clearTimeout(warningTimeout);
-    }
-
-    // Hide warning and stop pulsing after 5 seconds
+    btn.classList.add('needs-attention');
+    if (warn) warn.classList.add('show');
+    if (warningTimeout) clearTimeout(warningTimeout);
     warningTimeout = setTimeout(() => {
-      engageBtn.classList.remove('needs-attention');
-      if (connectionWarning) {
-        connectionWarning.classList.remove('show');
-      }
+      btn.classList.remove('needs-attention');
+      if (warn) warn.classList.remove('show');
     }, 5000);
   }
 }
 
 function toggleRobotEngagement() {
   const action = isRobotEngaged ? 'disconnect' : 'connect';
-  
   fetch('/api/robot', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ action: action })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action })
   })
-  .then(response => response.json())
-  .then(data => {
-    if (data.success) {
-      isRobotEngaged = !isRobotEngaged;
-      updateEngagementUI();
-    } else {
-      alert('Failed to ' + action + ' robot: ' + (data.error || 'Unknown error'));
-    }
-  })
-  .catch(error => {
-    console.error('Error toggling robot engagement:', error);
-    alert('Error communicating with server');
-  });
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        isRobotEngaged = !isRobotEngaged;
+        updateEngagementUI();
+      }
+    })
+    .catch(() => {});
 }
 
-// Toggle keyboard control
 function toggleKeyboardControl() {
   const action = isKeyboardEnabled ? 'disable' : 'enable';
-  
   fetch('/api/keyboard', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ action: action })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action })
   })
-  .then(response => response.json())
-  .then(data => {
-    if (data.success) {
-      isKeyboardEnabled = !isKeyboardEnabled;
-      const keyboardHelp = document.querySelector('.keyboard-help');
-      
-      if (isKeyboardEnabled) {
-        if (keyboardHelp) keyboardHelp.classList.add('active');
-      } else {
-        if (keyboardHelp) keyboardHelp.classList.remove('active');
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        isKeyboardEnabled = !isKeyboardEnabled;
+        const kbCard = document.querySelector('.keyboard-card');
+        const kbBtn = document.getElementById('keyboardToggleBtn');
+        const kbText = document.getElementById('keyboardToggleText');
+        if (isKeyboardEnabled) {
+          kbCard.classList.add('active');
+          kbBtn.classList.add('active');
+          kbText.textContent = 'Disable';
+        } else {
+          kbCard.classList.remove('active');
+          kbBtn.classList.remove('active');
+          kbText.textContent = 'Enable';
+        }
       }
-    } else {
-      alert('Failed to toggle keyboard control: ' + (data.error || 'Unknown error'));
-    }
-  })
-  .catch(error => {
-    console.error('Error toggling keyboard control:', error);
-    alert('Error communicating with server');
-  });
+    })
+    .catch(() => {});
 }
 
-// Check if running in VR/AR mode
+// VR mode detection
 function isVRMode() {
   return window.navigator.xr && document.fullscreenElement;
 }
 
-// Update UI based on device
 function updateUIForDevice() {
-  const desktopInterface = document.getElementById('desktopInterface');
-
+  const ui = document.getElementById('desktopInterface');
   if (isVRMode()) {
-    desktopInterface.style.display = 'none';
+    ui.style.display = 'none';
+  } else if (navigator.xr) {
+    navigator.xr.isSessionSupported('immersive-vr').then(supported => {
+      ui.style.display = supported ? 'none' : 'block';
+    }).catch(() => { ui.style.display = 'block'; });
   } else {
-    // Check if this is a VR-capable device
-    if (navigator.xr) {
-      navigator.xr.isSessionSupported('immersive-vr').then((supported) => {
-        if (supported) {
-          // VR-capable device - hide desktop interface (custom button in vr_app.js handles VR)
-          desktopInterface.style.display = 'none';
-        } else {
-          // Not VR-capable - show desktop interface
-          desktopInterface.style.display = 'block';
-        }
-      }).catch(() => {
-        // Fallback to desktop interface if XR check fails
-        desktopInterface.style.display = 'block';
-      });
-    } else {
-      // No XR support - show desktop interface
-      desktopInterface.style.display = 'block';
-    }
+    ui.style.display = 'block';
   }
 }
 
-// Web-based keyboard control
+// Keyboard handler
 let pressedKeys = new Set();
-
-// Add keyboard event listeners for web-based control
-// Use capture phase to intercept keys before browser handles them (e.g., F for fullscreen)
 document.addEventListener('keydown', handleKeyDown, { capture: true });
 document.addEventListener('keyup', handleKeyUp, { capture: true });
 
-function handleKeyDown(event) {
-  // Prevent default browser behavior for our control keys regardless of keyboard state
-  if (isControlKey(event.code)) {
-    event.preventDefault();
-  }
-
-  // Show warning if robot is not connected and user presses control keys
-  if (isControlKey(event.code) && !isRobotEngaged) {
-    showConnectionWarning();
-    return;
-  }
-
-  // Only handle keys if keyboard control is enabled and we're focused on the page
-  if (!isKeyboardEnabled || pressedKeys.has(event.code)) return;
-
-  if (isControlKey(event.code)) {
-    pressedKeys.add(event.code);
-    sendKeyCommand(event.code, 'press');
-  }
+function handleKeyDown(e) {
+  if (isControlKey(e.code)) e.preventDefault();
+  if (isControlKey(e.code) && !isRobotEngaged) { showConnectionWarning(); return; }
+  if (!isKeyboardEnabled || pressedKeys.has(e.code)) return;
+  if (isControlKey(e.code)) { pressedKeys.add(e.code); sendKeyCommand(e.code, 'press'); }
 }
 
-function handleKeyUp(event) {
-  // Prevent default browser behavior for our control keys regardless of keyboard state
-  if (isControlKey(event.code)) {
-    event.preventDefault();
-  }
-  
-  // Only handle keys if keyboard control is enabled
-  if (!isKeyboardEnabled || !pressedKeys.has(event.code)) return;
-  
-  if (isControlKey(event.code)) {
-    pressedKeys.delete(event.code);
-    sendKeyCommand(event.code, 'release');
-  }
+function handleKeyUp(e) {
+  if (isControlKey(e.code)) e.preventDefault();
+  if (!isKeyboardEnabled || !pressedKeys.has(e.code)) return;
+  if (isControlKey(e.code)) { pressedKeys.delete(e.code); sendKeyCommand(e.code, 'release'); }
 }
 
 function isControlKey(code) {
-  // Check if this is one of our robot control keys
-  const controlKeys = [
-    // Left arm movement
-    'KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE',
-    // Left arm wrist
-    'KeyZ', 'KeyX',  // wrist roll
-    'KeyR', 'KeyT',  // wrist flex
-    'KeyF',          // gripper
-    'Tab',           // toggle position control
-    // Right arm movement
-    'KeyI', 'KeyK', 'KeyJ', 'KeyL', 'KeyU', 'KeyO',
-    // Right arm wrist
-    'KeyN', 'KeyM',  // wrist roll
-    'KeyH', 'KeyY',  // wrist flex
-    'Semicolon',     // gripper
-    'Enter',         // toggle position control
-    // Global
-    'Escape'
-  ];
-  return controlKeys.includes(code);
+  return ['KeyW','KeyS','KeyA','KeyD','KeyQ','KeyE','KeyZ','KeyX','KeyR','KeyT','KeyF','Tab','Escape'].includes(code);
 }
 
 function sendKeyCommand(keyCode, action) {
-  // Convert browser keyCode to our key mapping
-  const keyMap = {
-    // Left arm movement
-    'KeyW': 'w', 'KeyS': 's', 'KeyA': 'a', 'KeyD': 'd',
-    'KeyQ': 'q', 'KeyE': 'e',
-    // Left arm wrist
-    'KeyZ': 'z', 'KeyX': 'x',  // wrist roll
-    'KeyR': 'r', 'KeyT': 't',  // wrist flex
-    'KeyF': 'f',               // gripper
-    'Tab': 'tab',              // toggle position control
-    // Right arm movement
-    'KeyI': 'i', 'KeyK': 'k', 'KeyJ': 'j', 'KeyL': 'l',
-    'KeyU': 'u', 'KeyO': 'o',
-    // Right arm wrist
-    'KeyN': 'n', 'KeyM': 'm',  // wrist roll
-    'KeyH': 'h', 'KeyY': 'y',  // wrist flex
-    'Semicolon': ';',          // gripper
-    'Enter': 'enter',          // toggle position control
-    // Global
-    'Escape': 'esc'
+  const map = {
+    'KeyW':'w','KeyS':'s','KeyA':'a','KeyD':'d','KeyQ':'q','KeyE':'e',
+    'KeyZ':'z','KeyX':'x','KeyR':'r','KeyT':'t','KeyF':'f',
+    'Tab':'tab','Escape':'esc'
   };
-
-  const key = keyMap[keyCode];
+  const key = map[keyCode];
   if (!key) return;
-
   fetch('/api/keypress', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ 
-      key: key, 
-      action: action 
-    })
-  })
-  .catch(error => {
-    console.error('Error sending key command:', error);
-  });
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key, action })
+  }).catch(() => {});
 }
 
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-  updateUIForDevice();
-  
-  // Start status monitoring
-  updateStatus();
-  setInterval(updateStatus, 2000); // Update every 2 seconds
-  
-  // Handle VR mode changes
-  document.addEventListener('fullscreenchange', updateUIForDevice);
-  
-  // VR session detection
-  if (navigator.xr) {
-    navigator.xr.addEventListener('sessionstart', () => {
-      updateStatus();
-      updateUIForDevice();
-    });
-    
-    navigator.xr.addEventListener('sessionend', () => {
-      updateStatus();
-      updateUIForDevice();
-    });
-  }
-
-  // Settings form handler
-  document.getElementById('settingsForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    saveConfiguration();
-  });
-
-  // Close modal when clicking outside
-  document.getElementById('settingsModal').addEventListener('click', (e) => {
-    if (e.target.id === 'settingsModal') {
-      closeSettings();
-    }
-  });
-});
-
-// Handle window resize
-window.addEventListener('resize', updateUIForDevice);
-
-// Switch between desktop and VR views
+// View switching
 function switchToVrView() {
-  const desktopInterface = document.getElementById('desktopInterface');
-  desktopInterface.style.display = 'none';
-  // The VR start button should already be visible or will be created by vr_app.js
-  // Trigger the button creation if not already done
-  if (!document.getElementById('start-tracking-button')) {
-    // Create a simple fallback button for non-XR devices
-    createFallbackVrButton();
-  }
+  document.getElementById('desktopInterface').style.display = 'none';
+  if (!document.getElementById('start-tracking-button')) createFallbackVrButton();
   showBackToDesktopButton();
 }
 
 function switchToDesktopView() {
-  const desktopInterface = document.getElementById('desktopInterface');
-  desktopInterface.style.display = 'block';
+  document.getElementById('desktopInterface').style.display = 'block';
   hideBackToDesktopButton();
 }
 
 function showBackToDesktopButton() {
-  let backBtn = document.getElementById('back-to-desktop-button');
-  if (!backBtn) {
-    backBtn = document.createElement('button');
-    backBtn.id = 'back-to-desktop-button';
-    backBtn.textContent = '← Back to Desktop View';
-    backBtn.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 12px 24px;
-      font-size: 16px;
-      background-color: #666;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      z-index: 9998;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    `;
-    backBtn.onclick = switchToDesktopView;
-    document.body.appendChild(backBtn);
+  let btn = document.getElementById('back-to-desktop-button');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'back-to-desktop-button';
+    btn.textContent = '← Back';
+    btn.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 24px;font-size:14px;background:#222;color:#aaa;border:1px solid #333;border-radius:8px;cursor:pointer;z-index:9998;';
+    btn.onclick = switchToDesktopView;
+    document.body.appendChild(btn);
   }
-  backBtn.style.display = 'block';
+  btn.style.display = 'block';
 }
 
 function hideBackToDesktopButton() {
-  const backBtn = document.getElementById('back-to-desktop-button');
-  if (backBtn) {
-    backBtn.style.display = 'none';
-  }
+  const btn = document.getElementById('back-to-desktop-button');
+  if (btn) btn.style.display = 'none';
 }
 
 function createFallbackVrButton() {
-  // Also create the instructions panel if the function exists
-  if (typeof createVrInstructionsPanel === 'function') {
-    createVrInstructionsPanel();
-  }
-
-  const startButton = document.createElement('button');
-  startButton.id = 'start-tracking-button';
-  startButton.textContent = 'Start Controller Tracking';
-  startButton.style.cssText = `
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    padding: 20px 40px;
-    font-size: 20px;
-    font-weight: bold;
-    background-color: #4CAF50;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    z-index: 9999;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-  `;
-  startButton.onclick = async () => {
-    const sceneEl = document.querySelector('a-scene');
-    if (sceneEl) {
-      startButton.textContent = 'Connecting...';
-      startButton.disabled = true;
-      try {
-        // Check if robot is already connected
-        const statusResponse = await fetch('/api/status');
-        const status = await statusResponse.json();
-        if (!status.robotEngaged) {
-          startButton.textContent = 'Connecting Arms...';
-          const connectResponse = await fetch('/api/robot', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'connect' })
-          });
-          const connectResult = await connectResponse.json();
-          if (!connectResult.success) {
-            throw new Error(connectResult.error || 'Failed to connect robot arms');
-          }
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        startButton.textContent = 'Starting VR...';
-        await sceneEl.enterVR(true);
-      } catch (err) {
-        alert(`Failed to start: ${err.message}`);
-        startButton.textContent = 'Start Controller Tracking';
-        startButton.disabled = false;
+  if (typeof createVrInstructionsPanel === 'function') createVrInstructionsPanel();
+  const btn = document.createElement('button');
+  btn.id = 'start-tracking-button';
+  btn.textContent = 'Start VR Control';
+  btn.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:18px 40px;font-size:18px;font-weight:700;background:#76b900;color:#000;border:none;border-radius:8px;cursor:pointer;z-index:9999;';
+  btn.onclick = async () => {
+    const scene = document.querySelector('a-scene');
+    if (!scene) return;
+    btn.textContent = 'Connecting...';
+    btn.disabled = true;
+    try {
+      const sr = await fetch('/api/status');
+      const st = await sr.json();
+      if (!st.robotEngaged) {
+        btn.textContent = 'Engaging Motors...';
+        const cr = await fetch('/api/robot', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action:'connect'}) });
+        const cd = await cr.json();
+        if (!cd.success) throw new Error(cd.error || 'Failed');
+        await new Promise(r => setTimeout(r, 500));
       }
-    } else {
-      alert('VR scene not available. Please reload the page.');
+      btn.textContent = 'Starting VR...';
+      await scene.enterVR(true);
+    } catch (err) {
+      alert('Failed: ' + err.message);
+      btn.textContent = 'Start VR Control';
+      btn.disabled = false;
     }
   };
-  document.body.appendChild(startButton);
-} 
+  document.body.appendChild(btn);
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+  updateUIForDevice();
+  updateStatus();
+  setInterval(updateStatus, 2000);
+  document.addEventListener('fullscreenchange', updateUIForDevice);
+  document.getElementById('settingsForm').addEventListener('submit', e => { e.preventDefault(); saveConfiguration(); });
+  document.getElementById('settingsModal').addEventListener('click', e => { if (e.target.id === 'settingsModal') closeSettings(); });
+});
+
+window.addEventListener('resize', updateUIForDevice);

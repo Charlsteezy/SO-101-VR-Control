@@ -574,10 +574,10 @@ function addControllerTrackingButton() {
             navigator.xr.isSessionSupported('immersive-vr').catch(() => false)
         ]).then(([arSupported, vrSupported]) => {
             if (arSupported || vrSupported) {
-                // Create Start Controller Tracking button
+                // Create Start VR Control button
                 const startButton = document.createElement('button');
                 startButton.id = 'start-tracking-button';
-                startButton.textContent = 'Start Controller Tracking';
+                startButton.textContent = 'Start VR Control';
                 startButton.style.position = 'fixed';
                 startButton.style.top = '50%';
                 startButton.style.left = '50%';
@@ -585,27 +585,27 @@ function addControllerTrackingButton() {
                 startButton.style.padding = '20px 40px';
                 startButton.style.fontSize = '20px';
                 startButton.style.fontWeight = 'bold';
-                startButton.style.backgroundColor = '#4CAF50';
-                startButton.style.color = 'white';
+                startButton.style.backgroundColor = '#76b900';
+                startButton.style.color = '#000';
                 startButton.style.border = 'none';
-                startButton.style.borderRadius = '8px';
+                startButton.style.borderRadius = '10px';
                 startButton.style.cursor = 'pointer';
                 startButton.style.zIndex = '9999';
-                startButton.style.boxShadow = '0 4px 8px rgba(0,0,0,0.3)';
-                startButton.style.transition = 'all 0.3s ease';
+                startButton.style.boxShadow = '0 4px 20px rgba(118,185,0,0.3)';
+                startButton.style.transition = 'all 0.2s ease';
+                startButton.style.letterSpacing = '0.3px';
 
-                // Hover effects
                 startButton.addEventListener('mouseenter', () => {
-                    startButton.style.backgroundColor = '#45a049';
-                    startButton.style.transform = 'translate(-50%, -50%) scale(1.05)';
+                    startButton.style.backgroundColor = '#8ad000';
+                    startButton.style.transform = 'translate(-50%, -50%) scale(1.03)';
                 });
                 startButton.addEventListener('mouseleave', () => {
-                    startButton.style.backgroundColor = '#4CAF50';
+                    startButton.style.backgroundColor = '#76b900';
                     startButton.style.transform = 'translate(-50%, -50%) scale(1)';
                 });
 
                 startButton.onclick = async () => {
-                    console.log('Start Controller Tracking button clicked.');
+                    console.log('Start VR Control button clicked.');
                     const sceneEl = document.querySelector('a-scene');
                     if (!sceneEl) {
                         console.error('A-Frame scene not found for enterVR call!');
@@ -654,13 +654,13 @@ function addControllerTrackingButton() {
                         console.error('Failed to start controller tracking:', err);
                         alert(`Failed to start: ${err.message}`);
                         // Reset button state
-                        startButton.textContent = 'Start Controller Tracking';
+                        startButton.textContent = 'Start VR Control';
                         startButton.disabled = false;
                     }
                 };
 
                 document.body.appendChild(startButton);
-                console.log('Official "Start Controller Tracking" button added.');
+                console.log('Official "Start VR Control" button added.');
 
                 // Add VR instructions panel
                 createVrInstructionsPanel();
@@ -707,30 +707,31 @@ function createVrInstructionsPanel() {
         left: 50%;
         transform: translateX(-50%);
         max-width: 90%;
-        width: 600px;
-        background: rgba(15, 52, 96, 0.95);
+        width: 480px;
+        background: rgba(17, 17, 19, 0.96);
         border-radius: 12px;
-        padding: 20px;
-        color: white;
+        padding: 24px;
+        color: #e5e5e5;
         z-index: 9998;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        border: 1px solid rgba(255,255,255,0.1);
+        box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+        border: 1px solid rgba(255,255,255,0.08);
+        backdrop-filter: blur(8px);
     `;
 
     panel.innerHTML = `
-        <h2 style="margin: 0 0 15px 0; font-size: 1.2em; text-align: center;">VR Controller Instructions</h2>
-        <div style="display: flex; gap: 15px; align-items: flex-start; flex-wrap: wrap;">
-            <div style="flex: 1; min-width: 150px; text-align: center;">
-                <img src="media/telegrip_instructions.jpg" alt="VR Controller Instructions"
-                     style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+        <h2 style="margin: 0 0 18px 0; font-size: 15px; text-align: center; font-weight: 700; color: #fff; letter-spacing: 0.3px;">SO-101 VR Control</h2>
+        <div style="display: flex; flex-direction: column; gap: 10px; font-size: 13px;">
+            <div style="padding: 10px 14px; background: rgba(236,72,153,0.12); border: 1px solid rgba(236,72,153,0.2); border-radius: 8px; display: flex; align-items: center; gap: 12px;">
+                <span style="color: #ec4899; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 50px;">GRIP</span>
+                <span style="color: #a1a1aa;">Hold to move arm — tracks hand position</span>
             </div>
-            <div style="flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px; font-size: 14px;">
-                <div style="padding: 8px; background: rgba(255,255,255,0.1); border-radius: 6px;">
-                    <strong style="color: #ee4d9a;">Grip Button:</strong> Hold to move the arm
-                </div>
-                <div style="padding: 8px; background: rgba(255,255,255,0.1); border-radius: 6px;">
-                    <strong style="color: #9af58c;">Trigger:</strong> Hold to close gripper
-                </div>
+            <div style="padding: 10px 14px; background: rgba(132,204,22,0.1); border: 1px solid rgba(132,204,22,0.18); border-radius: 8px; display: flex; align-items: center; gap: 12px;">
+                <span style="color: #84cc16; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 50px;">TRIGGER</span>
+                <span style="color: #a1a1aa;">Hold to close gripper, release to open</span>
+            </div>
+            <div style="padding: 10px 14px; background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.15); border-radius: 8px; display: flex; align-items: center; gap: 12px;">
+                <span style="color: #38bdf8; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 50px;">WRIST</span>
+                <span style="color: #a1a1aa;">Roll & pitch mapped to robot wrist</span>
             </div>
         </div>
     `;
