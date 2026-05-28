@@ -1,17 +1,17 @@
-# SO-101 VR Control v2.0
+# SO-101 VR Control
 
-Single-arm VR teleoperation for the [SO-101 robot arm](https://github.com/TheRobotStudio/SO-ARM100) via Meta Quest headsets. Browser-based WebXR — no app installation required.
+Open-source browser-based VR teleoperation for the SO-101 robot arm using Meta Quest. One command, no app install.
 
-<img src="web-ui/media/vr_instructions.svg" alt="VR Controller Guide" width="400">
+<img src="web-ui/media/vr_instructions.svg" alt="VR Controller Guide" width="420">
 
 ## Features
 
-- **WebXR in browser** — open a URL on your Quest, no app install
+- **Browser-based WebXR** — open a URL on your Quest, start controlling instantly
 - **Single-arm optimized** — both VR controllers map to one arm
 - **Calibration-safe kinematics** — joint limits tightened to actual motor range
-- **Self-collision protection** — Z-floor enforcement, velocity limiting
-- **Dark UI dashboard** — status, settings, keyboard fallback
-- **PyBullet IK** — multi-reference pose inverse kinematics
+- **Self-collision protection** — ground collision prevention, velocity limiting
+- **Dark UI dashboard** — real-time status, settings, keyboard fallback
+- **PyBullet IK** — multi-reference pose inverse kinematics solver
 
 ## Hardware
 
@@ -19,55 +19,114 @@ Single-arm VR teleoperation for the [SO-101 robot arm](https://github.com/TheRob
 |-----------|---------|
 | Robot | SO-101 (6x STS3215 FEEtech servos) |
 | VR Headset | Meta Quest 2 / Pro / 3 / 3S |
-| Connection | USB serial |
+| Connection | USB serial (`/dev/ttyACM0`) |
+
+## Installation
+
+```bash
+conda activate pi0
+cd ~/so101-vr
+pip install -e .
+```
 
 ## Quick Start
 
 ```bash
-conda activate pi0
-cd ~/telegrip
-pip install -e .
-so101-vr --left-port /dev/ttyACM0 --log-level info --no-viz
+so101-vr --port /dev/ttyACM0 --log-level info
 ```
 
-Open `https://<your-ip>:8443` on your Quest browser.
+Output:
+
+```
+  SO-101 VR Control v2.0.0
+  ========================
+  Dashboard:  https://<your-ip>:8443
+  Quest URL:  https://<your-ip>:8443
+  WebSocket:  wss://<your-ip>:8442
+```
+
+Open the URL on your Quest browser, click **Connect Robot**, then **Start VR Control**.
 
 ## VR Controls
 
 | Action | Controller |
 |--------|-----------|
-| Move arm | Hold **GRIP** |
-| Close gripper | Hold **TRIGGER** |
-| Open gripper | Release **TRIGGER** |
-| Wrist rotation | Controller orientation |
+| **Move arm** | Hold **GRIP** — arm tracks your hand |
+| **Release arm** | Release **GRIP** |
+| **Close gripper** | Hold **TRIGGER** |
+| **Open gripper** | Release **TRIGGER** |
+| **Wrist rotation** | Controller roll & pitch |
 
 Either hand works — both are remapped to the single arm.
 
-## Safety
+## Keyboard Controls
 
-- Joint limits tightened from motor calibration (5° margin)
-- Velocity limited to 200°/s (10°/step at 20Hz)
-- Ground collision prevention (Z-floor + post-IK FK check)
-- LeRobot `max_relative_target = 10°` per command
+Enable via the dashboard toggle.
+
+| Key | Action |
+|-----|--------|
+| W / S | Forward / Back |
+| A / D | Left / Right |
+| Q / E | Down / Up |
+| Z / X | Wrist Roll |
+| F | Toggle Gripper |
+| ESC | Emergency Stop |
 
 ## CLI Options
 
 ```
 so101-vr [OPTIONS]
 
---left-port PORT    Serial port for the arm
---no-robot          Visualization only
---no-viz            Headless mode (no PyBullet GUI)
+--port PORT         SO-101 serial port (e.g. /dev/ttyACM0)
+--no-robot          Simulation only, no hardware
 --no-vr             Disable VR WebSocket server
+--no-keyboard       Disable keyboard input
 --autoconnect       Auto-engage motors on startup
 --log-level LEVEL   debug | info | warning | error
+--https-port PORT   HTTPS port (default: 8443)
+--ws-port PORT      WebSocket port (default: 8442)
+```
+
+## Safety
+
+- Joint limits tightened from motor calibration (5° safety margin)
+- Velocity limited to 200°/s (10°/step at 20 Hz)
+- Ground collision prevention (Z-floor enforcement + post-IK FK check)
+- LeRobot `max_relative_target = 10°` per command
+- VR wrist clamped to ±170° roll, ±90° flex
+
+## Architecture
+
+```
+Quest Browser (WebXR / A-Frame)
+      │
+      │ WSS :8442
+      ▼
+VRWebSocketServer
+      │
+      │ asyncio.Queue
+      ▼
+ControlLoop → _resolve_arm() → routes both hands to single arm
+      │
+      ▼
+RobotInterface
+  ├── IK solver (PyBullet, calibration-safe limits)
+  ├── FK collision check (Z-floor)
+  ├── Velocity limiter (10°/step)
+  └── send_command()
+        │
+        │ USB serial
+        ▼
+LeRobot SOFollower (max_relative_target=10)
+        │
+        ▼
+SO-101 (6x STS3215)
 ```
 
 ## Credits
 
-Based on [Telegrip](https://github.com/DipFlip/telegrip) by Emil Rofors. Modified for single-arm SO-101 operation with safety enhancements by GetSet Robotics.
+Based on [Telegrip](https://github.com/DipFlip/telegrip) by Emil Rofors. Modified for single-arm SO-101 operation with safety enhancements by [GetSet Robotics](mailto:getsetrobotics@gmail.com).
 
 ## License
 
 MIT
-# SO-101-VR-Control
