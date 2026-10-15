@@ -95,6 +95,18 @@ DEFAULT_CONFIG = {
             "fps": 30,
         },
     },
+    "roboflow": {
+        "enabled": False,
+        "api_key": "",
+        "model_id": "",
+        "api_url": "https://serverless.roboflow.com",
+        "cameras": ["front", "wrist", "top"],
+        "confidence": 0.4,
+        "max_fps_per_camera": 4,
+        "save_overlays": True,
+        "save_predictions": True,
+        "preview_overlay": True,
+    },
 }
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -281,6 +293,18 @@ class TelegripConfig:
     recording_task: str = "pick and place"
     recording_robot_type: str = "so101"
     cameras: Dict[str, dict] = None
+
+    # Roboflow hosted inference
+    roboflow_enabled: bool = False
+    roboflow_api_key: str = ""
+    roboflow_model_id: str = ""
+    roboflow_api_url: str = "https://serverless.roboflow.com"
+    roboflow_cameras: List[str] = None
+    roboflow_confidence: float = 0.4
+    roboflow_max_fps_per_camera: float = 4.0
+    roboflow_save_overlays: bool = True
+    roboflow_save_predictions: bool = True
+    roboflow_preview_overlay: bool = True
     
     def __post_init__(self):
         # Initialize follower_ports if not set
@@ -310,6 +334,26 @@ class TelegripConfig:
 
         if self.cameras is None:
             self.cameras = dict(_config_data.get("cameras", {}))
+
+        rf = _config_data.get("roboflow", {})
+        self.roboflow_enabled = bool(rf.get("enabled", False))
+        # Prefer env var over config so secrets stay out of yaml
+        env_key = os.environ.get("ROBOFLOW_API_KEY", "").strip()
+        self.roboflow_api_key = env_key or str(rf.get("api_key", "") or "")
+        self.roboflow_model_id = str(rf.get("model_id", "") or "")
+        self.roboflow_api_url = str(
+            rf.get("api_url", "https://serverless.roboflow.com") or "https://serverless.roboflow.com"
+        )
+        cams = rf.get("cameras")
+        if cams is None:
+            self.roboflow_cameras = ["front", "wrist", "top"]
+        else:
+            self.roboflow_cameras = list(cams)
+        self.roboflow_confidence = float(rf.get("confidence", 0.4))
+        self.roboflow_max_fps_per_camera = float(rf.get("max_fps_per_camera", 4))
+        self.roboflow_save_overlays = bool(rf.get("save_overlays", True))
+        self.roboflow_save_predictions = bool(rf.get("save_predictions", True))
+        self.roboflow_preview_overlay = bool(rf.get("preview_overlay", True))
 
     def get_absolute_recording_root(self) -> str:
         """Get absolute path to the dataset root directory."""

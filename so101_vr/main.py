@@ -159,6 +159,8 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             self.handle_recording_request()
         elif self.path == '/api/cameras/apply':
             self.handle_camera_apply_request()
+        elif self.path == '/api/cameras/disconnect':
+            self.handle_camera_disconnect_request()
         elif self.path == '/api/keypress':
             self.handle_keypress_request()
         elif self.path == '/api/config':
@@ -372,7 +374,7 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             }).encode('utf-8'))
 
     def handle_camera_apply_request(self):
-        """Apply discovered cameras to front/wrist/top and connect them."""
+        """Connect selected camera slot→device assignments."""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             body = {}
@@ -390,8 +392,15 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
                 }).encode('utf-8'))
                 return
 
-            devices = body.get("cameras")
-            result = recorder.apply_discovered_cameras(devices)
+            assignments = body.get("assignments")
+            merge = bool(body.get("merge", False))
+            if assignments:
+                result = recorder.apply_camera_assignments(assignments, merge=merge)
+            else:
+                # Legacy: map a device list onto front/wrist/top in order
+                devices = body.get("cameras")
+                result = recorder.apply_discovered_cameras(devices)
+
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -403,6 +412,58 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400, "Invalid JSON")
         except Exception as e:
             logger.error(f"Error applying cameras: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": False,
+                "error": str(e),
+            }).encode('utf-8'))
+
+    def handle_camera_disconnect_request(self):
+        """Disconnect one or more named camera slots."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = {}
+            if content_length > 0:
+                body = json.loads(self.rfile.read(content_length).decode('utf-8'))
+
+            recorder = self._get_episode_recorder()
+            if recorder is None:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "error": "Recording is not enabled",
+                }).encode('utf-8'))
+                return
+
+            names = body.get("names")
+            if not names and body.get("name"):
+                names = [body.get("name")]
+            if not names:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "error": "Provide names: [\"front\", ...] or name: \"front\"",
+                }).encode('utf-8'))
+                return
+
+            result = recorder.disconnect_cameras(list(names))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                **result,
+            }).encode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+        except Exception as e:
+            logger.error(f"Error disconnecting cameras: {e}")
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()

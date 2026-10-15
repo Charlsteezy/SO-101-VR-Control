@@ -6,6 +6,7 @@ let camerasConnected = false;
 let discoveredCameras = [];
 let previewCameraNames = [];
 let previewTimer = null;
+const CAMERA_SLOTS = ['front', 'wrist', 'top'];
 let currentConfig = {};
 let warningTimeout = null;
 let recordWarningTimeout = null;
@@ -156,6 +157,8 @@ function updateCameraPreview(data) {
       tile.className = 'camera-tile';
       tile.innerHTML =
         `<div class="camera-tile-label">${name}</div>` +
+        `<button type="button" class="camera-tile-disconnect" title="Disconnect ${name}" ` +
+        `onclick="disconnectCamera('${name}')">Disconnect</button>` +
         `<img id="preview-${name}" alt="${name} camera" decoding="async">`;
       inner.appendChild(tile);
     });
@@ -223,6 +226,28 @@ function updateRecordingUI(data) {
   }
 
   btn.disabled = !recordingEnabled && !isRecording;
+  updateRoboflowStatus(data.roboflow);
+}
+
+function updateRoboflowStatus(rf) {
+  const el = document.getElementById('roboflowStatusText');
+  if (!el) return;
+  if (!rf || !rf.enabled) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.hidden = false;
+  if (rf.healthy || rf.active) {
+    const fps = rf.fpsEstimate != null ? Number(rf.fpsEstimate).toFixed(1) : '0.0';
+    const pending = rf.pending != null ? rf.pending : 0;
+    el.textContent = `Roboflow · ${rf.modelId || 'model'} · ~${fps} Hz · pending ${pending}`;
+    el.style.color = 'var(--green, #3ecf8e)';
+  } else {
+    const err = rf.lastError || 'not active';
+    el.textContent = `Roboflow · offline (${err})`;
+    el.style.color = 'var(--amber)';
+  }
 }
 
 function showRecordWarning(message) {
@@ -237,25 +262,122 @@ function showRecordWarning(message) {
 function renderCameraResults(cameras) {
   const list = document.getElementById('cameraSearchResults');
   const applyBtn = document.getElementById('applyCamerasBtn');
+  const hint = document.getElementById('cameraSelectHint');
   if (!list) return;
 
   list.innerHTML = '';
   if (!cameras || cameras.length === 0) {
     list.innerHTML = '<li class="camera-empty">No cameras found</li>';
     if (applyBtn) applyBtn.disabled = true;
+    if (hint) hint.hidden = true;
     return;
   }
 
   cameras.forEach((cam, i) => {
     const profile = cam.default_stream_profile || {};
+    const defaultSlot = i < CAMERA_SLOTS.length ? CAMERA_SLOTS[i] : '';
+    const checked = i < CAMERA_SLOTS.length ? 'checked' : '';
+    const slotOptions = ['<option value="">—</option>']
+      .concat(CAMERA_SLOTS.map(slot =>
+        `<option value="${slot}"${slot === defaultSlot ? ' selected' : ''}>${slot}</option>`
+      ))
+      .join('');
+
     const li = document.createElement('li');
+    li.className = 'cam-result' + (checked ? ' will-use' : '');
+    li.dataset.index = String(i);
     li.innerHTML =
-      `<span class="cam-id">${cam.id}</span>` +
-      `<span class="cam-meta">${profile.width || '?'}×${profile.height || '?'} @ ${profile.fps || '?'}fps</span>`;
-    if (i < 3) li.classList.add('will-use');
+      `<label class="cam-check">` +
+        `<input type="checkbox" ${checked} onchange="onCameraSelectChange(this)">` +
+        `<span class="cam-id">${cam.id}</span>` +
+      `</label>` +
+      `<span class="cam-meta">${profile.width || '?'}×${profile.height || '?'} @ ${profile.fps || '?'}fps</span>` +
+      `<select class="cam-slot" onchange="onCameraSelectChange(this)" aria-label="Camera slot">` +
+        slotOptions +
+      `</select>`;
     list.appendChild(li);
   });
-  if (applyBtn) applyBtn.disabled = false;
+
+  if (hint) hint.hidden = false;
+  syncApplyButtonState();
+}
+
+function onCameraSelectChange(el) {
+  const li = el && el.closest ? el.closest('li.cam-result') : null;
+  if (li) {
+    const cb = li.querySelector('input[type="checkbox"]');
+    const slot = li.querySelector('select.cam-slot');
+    if (cb && slot && cb.checked && !slot.value) {
+      // Auto-pick first free slot when checking a row
+      const used = getUsedSlots(li);
+      const free = CAMERA_SLOTS.find(s => !used.has(s));
+      if (free) slot.value = free;
+    }
+    if (cb && slot) {
+      li.classList.toggle('will-use', !!(cb.checked && slot.value));
+    }
+  }
+  syncApplyButtonState();
+}
+
+function getUsedSlots(exceptLi) {
+  const used = new Set();
+  document.querySelectorAll('#cameraSearchResults li.cam-result').forEach(li => {
+    if (exceptLi && li === exceptLi) return;
+    const cb = li.querySelector('input[type="checkbox"]');
+    const slot = li.querySelector('select.cam-slot');
+    if (cb && cb.checked && slot && slot.value) used.add(slot.value);
+  });
+  return used;
+}
+
+function syncApplyButtonState() {
+  const applyBtn = document.getElementById('applyCamerasBtn');
+  if (!applyBtn) return;
+  try {
+    const selected = collectSelectedAssignments();
+    applyBtn.disabled = selected.length === 0;
+  } catch (_) {
+    applyBtn.disabled = true;
+  }
+}
+
+function collectSelectedAssignments() {
+  const items = document.querySelectorAll('#cameraSearchResults li.cam-result');
+  const assignments = [];
+  const usedSlots = new Set();
+  const usedIds = new Set();
+
+  items.forEach(li => {
+    const cb = li.querySelector('input[type="checkbox"]');
+    const slotEl = li.querySelector('select.cam-slot');
+    if (!cb || !cb.checked) return;
+    const slot = slotEl ? slotEl.value : '';
+    if (!slot) {
+      throw new Error('Checked camera is missing a slot (front / wrist / top)');
+    }
+    if (usedSlots.has(slot)) {
+      throw new Error(`Slot "${slot}" is assigned more than once`);
+    }
+    const idx = parseInt(li.dataset.index, 10);
+    const cam = discoveredCameras[idx];
+    if (!cam) return;
+    const id = cam.id;
+    if (usedIds.has(String(id))) {
+      throw new Error(`Device ${id} selected more than once`);
+    }
+    usedSlots.add(slot);
+    usedIds.add(String(id));
+    const profile = cam.default_stream_profile || {};
+    assignments.push({
+      name: slot,
+      id,
+      width: profile.width || 640,
+      height: profile.height || 480,
+      fps: profile.fps || 30,
+    });
+  });
+  return assignments;
 }
 
 function searchCameras() {
@@ -315,15 +437,31 @@ function applyCameras() {
     showRecordWarning('Search for cameras first');
     return;
   }
+
+  let assignments;
+  try {
+    assignments = collectSelectedAssignments();
+  } catch (err) {
+    showRecordWarning(err.message || 'Invalid camera selection');
+    return;
+  }
+  if (!assignments.length) {
+    showRecordWarning('Select at least one camera and slot');
+    return;
+  }
+
   if (btn) {
     btn.disabled = true;
     btn.textContent = 'Connecting...';
   }
 
+  // After a search all devices were released; merge if some slots are still live
+  const merge = camerasConnected && previewCameraNames.length > 0;
+
   fetch('/api/cameras/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cameras: discoveredCameras })
+    body: JSON.stringify({ assignments, merge })
   })
     .then(async r => {
       const data = await r.json().catch(() => ({}));
@@ -331,10 +469,12 @@ function applyCameras() {
         throw new Error(data.error || 'Failed to connect cameras');
       }
       camerasConnected = !!data.cameraConnected;
-      const names = (data.assignments || []).map(a => `${a.name}→${a.id}`).join(', ');
+      const connectedMap = data.connectedCameras || {};
+      (data.assignments || []).forEach(a => {
+        if (!connectedMap[a.name]) connectedMap[a.name] = String(a.id);
+      });
+      const names = Object.keys(connectedMap).map(n => `${n}→${connectedMap[n]}`).join(', ');
       showRecordWarning(camerasConnected ? `Connected: ${names}` : 'Camera connect incomplete');
-      const connectedMap = {};
-      (data.assignments || []).forEach(a => { connectedMap[a.name] = String(a.id); });
       updateCameraPreview({
         cameraConnected: camerasConnected,
         connectedCameras: connectedMap,
@@ -344,10 +484,50 @@ function applyCameras() {
     .catch(err => showRecordWarning(err.message || 'Failed to connect cameras'))
     .finally(() => {
       if (btn) {
-        btn.disabled = !discoveredCameras.length;
-        btn.textContent = 'Connect Found';
+        btn.textContent = 'Connect Selected';
+        syncApplyButtonState();
       }
     });
+}
+
+function disconnectCamera(name) {
+  if (isRecording) {
+    showRecordWarning('Stop recording before disconnecting cameras');
+    return;
+  }
+  if (!name) return;
+
+  fetch('/api/cameras/disconnect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names: [name] })
+  })
+    .then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.success === false) {
+        throw new Error(data.error || `Failed to disconnect ${name}`);
+      }
+      camerasConnected = !!data.cameraConnected;
+      const connectedMap = data.connectedCameras || {};
+      showRecordWarning(
+        camerasConnected
+          ? `Disconnected ${name}. Still connected: ${Object.keys(connectedMap).join(', ')}`
+          : `Disconnected ${name}`
+      );
+      updateCameraPreview({
+        cameraConnected: camerasConnected,
+        connectedCameras: connectedMap,
+      });
+      updateRecordingUI({
+        recording: isRecording,
+        cameraConnected: camerasConnected,
+        recordingEnabled: true,
+        episodeIndex: 0,
+        frameCount: 0,
+      });
+      updateStatus();
+    })
+    .catch(err => showRecordWarning(err.message || 'Failed to disconnect camera'));
 }
 
 function toggleRecording() {

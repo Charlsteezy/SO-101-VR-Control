@@ -33,6 +33,10 @@ dev = [
     "flake8",
     "mypy",
 ]
+roboflow = [
+    "inference-sdk",
+    "supervision",
+]
 
 [project.scripts]
 so101-vr = "so101_vr.main:main_cli"

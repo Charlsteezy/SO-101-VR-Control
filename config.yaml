@@ -1,12 +1,12 @@
 cameras:
   front:
     fps: 30
-    height: 480
+    height: 360
     index_or_path: /dev/video0
     width: 640
   wrist:
     fps: 30
-    height: 360
+    height: 480
     index_or_path: /dev/video2
     width: 640
 control:
@@ -41,6 +41,20 @@ recording:
   robot_type: so101
   root: datasets
   task: pick and place
+roboflow:
+  api_key: ""
+  api_url: https://serverless.roboflow.com
+  cameras:
+  - front
+  - wrist
+  - top
+  confidence: 0.4
+  enabled: true
+  max_fps_per_camera: 4
+  model_id: litter-finder/4
+  preview_overlay: true
+  save_overlays: true
+  save_predictions: true
 robot:
   left_arm:
     enabled: true

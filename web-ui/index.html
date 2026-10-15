@@ -139,15 +139,19 @@
                 </button>
               </div>
               <p class="record-status" id="recordStatusText">Idle</p>
+              <p class="record-status roboflow-status" id="roboflowStatusText" hidden></p>
               <div class="camera-search">
                 <div class="record-actions">
                   <button id="searchCamerasBtn" class="search-cam-btn" onclick="searchCameras()">
                     Search Cameras
                   </button>
                   <button id="applyCamerasBtn" class="apply-cam-btn" onclick="applyCameras()" disabled>
-                    Connect Found
+                    Connect Selected
                   </button>
                 </div>
+                <p class="camera-hint" id="cameraSelectHint" hidden>
+                  Check devices and pick a slot (front / wrist / top)
+                </p>
                 <ul class="camera-list" id="cameraSearchResults"></ul>
               </div>
               <div class="connection-warning" id="recordWarning">

@@ -7,6 +7,7 @@ from .robot_interface import RobotInterface
 from .kinematics import IKSolver, ForwardKinematics
 from .visualizer import PyBulletVisualizer
 from .episode_recorder import EpisodeRecorder
+from .roboflow_inference import RoboflowInferenceService
 
 __all__ = [
     "RobotInterface",
@@ -14,4 +15,5 @@ __all__ = [
     "ForwardKinematics",
     "PyBulletVisualizer",
     "EpisodeRecorder",
+    "RoboflowInferenceService",
 ] 

@@ -1,20 +1,23 @@
 """
 Episode recorder for LeRobot dataset collection during teleoperation.
 Captures joint observations/actions and USB camera frames at the control rate.
+Optionally runs hosted Roboflow OD and stores overlay videos + predictions JSONL.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import math
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TextIO
 
 import numpy as np
 
 from ..config import TelegripConfig, JOINT_NAMES, save_config
+from .roboflow_inference import RoboflowInferenceService
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,11 @@ class EpisodeRecorder:
         self._camera_lock = threading.Lock()
         self.last_discovered: List[dict] = []
 
+        self.roboflow = RoboflowInferenceService.from_config(config)
+        self._predictions_file: Optional[TextIO] = None
+        self._predictions_path: Optional[Path] = None
+        self._recording_episode_index: int = 0
+
     @property
     def cameras_connected(self) -> bool:
         return self._cameras_connected and len(self.cameras) > 0
@@ -44,6 +52,24 @@ class EpisodeRecorder:
         if self.dataset is None:
             return 0
         return int(getattr(self.dataset, "num_episodes", 0))
+
+    @property
+    def _save_overlays(self) -> bool:
+        return bool(self.config.roboflow_enabled and self.config.roboflow_save_overlays)
+
+    @property
+    def _save_predictions(self) -> bool:
+        return bool(self.config.roboflow_enabled and self.config.roboflow_save_predictions)
+
+    def _dataset_expects_overlays(self) -> bool:
+        """True when the open dataset schema includes *_overlay image features."""
+        if self.dataset is None:
+            return self._save_overlays
+        features = getattr(self.dataset, "features", None) or {}
+        for name in self.cameras:
+            if f"observation.images.{name}_overlay" in features:
+                return True
+        return False
 
     @property
     def status(self) -> dict:
@@ -57,6 +83,7 @@ class EpisodeRecorder:
                 name: str(getattr(cam, "index_or_path", name))
                 for name, cam in self.cameras.items()
             },
+            "roboflow": self.roboflow.status(),
         }
 
     def setup(self) -> bool:
@@ -71,6 +98,8 @@ class EpisodeRecorder:
             self.release_cameras()
             return False
 
+        self._start_roboflow()
+
         try:
             if self.dataset is None:
                 self._create_or_load_dataset()
@@ -78,6 +107,13 @@ class EpisodeRecorder:
         except Exception as e:
             logger.error(f"Dataset setup failed: {e}")
             return False
+
+    def _start_roboflow(self) -> None:
+        """Start hosted inference for the currently connected cameras."""
+        if not self.config.roboflow_enabled:
+            return
+        self.roboflow.set_active_cameras(list(self.cameras.keys()))
+        self.roboflow.start()
 
     @staticmethod
     def _sanitize_camera_info(cam_info: dict) -> dict:
@@ -157,61 +193,210 @@ class EpisodeRecorder:
             logger.info(f"🔍 Found {len(discovered)} usable OpenCV camera(s)")
             return discovered
 
-    def apply_discovered_cameras(self, devices: Optional[List[dict]] = None) -> dict:
-        """Map discovered devices onto front/wrist/top, save config, and connect."""
-        if self.is_recording:
-            raise RuntimeError("Stop recording before reconnecting cameras")
+    @staticmethod
+    def _assignment_from_device(name: str, device: dict) -> dict:
+        """Build a camera config entry + assignment record from a discovered device."""
+        profile = device.get("default_stream_profile") or {}
+        width = int(device.get("width") or profile.get("width") or 640)
+        height = int(device.get("height") or profile.get("height") or 480)
+        fps_val = device.get("fps") if device.get("fps") is not None else profile.get("fps") or 30
+        try:
+            fps = int(fps_val) if float(fps_val) > 0 else 30
+        except (TypeError, ValueError):
+            fps = 30
 
+        cam_id = device.get("id", device.get("index_or_path"))
+        return {
+            "name": name,
+            "id": cam_id,
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "index_or_path": cam_id,
+        }
+
+    def apply_discovered_cameras(self, devices: Optional[List[dict]] = None) -> dict:
+        """Map devices onto front/wrist/top in order (legacy all-selected path)."""
         devices = devices if devices is not None else self.last_discovered
         if not devices:
             raise RuntimeError("No cameras to apply — run search first")
 
-        names = list((self.config.cameras or {}).keys()) or list(DEFAULT_CAMERA_NAMES)
+        names = list(DEFAULT_CAMERA_NAMES)
         if len(devices) < len(names):
-            # Use as many named slots as we have devices
             names = names[: len(devices)]
-            logger.warning(
-                f"Found {len(devices)} camera(s); configuring only: {', '.join(names)}"
-            )
         elif len(devices) > len(names):
             logger.info(
                 f"Found {len(devices)} cameras; using the first {len(names)} for {names}"
             )
 
-        new_cameras: Dict[str, dict] = {}
-        assignments = []
-        for name, device in zip(names, devices):
-            profile = device.get("default_stream_profile") or {}
-            width = int(profile.get("width") or 640)
-            height = int(profile.get("height") or 480)
-            fps_val = profile.get("fps") or 30
-            try:
-                fps = int(fps_val) if float(fps_val) > 0 else 30
-            except (TypeError, ValueError):
-                fps = 30
+        assignments = [
+            self._assignment_from_device(name, device)
+            for name, device in zip(names, devices)
+        ]
+        return self.apply_camera_assignments(assignments, merge=False)
 
-            cam_id = device.get("id")
-            new_cameras[name] = {
+    def apply_camera_assignments(
+        self,
+        assignments: List[dict],
+        *,
+        merge: bool = False,
+    ) -> dict:
+        """Connect specific slot→device assignments.
+
+        Args:
+            assignments: [{"name": "front", "id": "/dev/video0", ...}, ...]
+            merge: If True, only replace the named slots and keep other connected
+                cameras. If False, release everything first and connect only these.
+        """
+        if self.is_recording:
+            raise RuntimeError("Stop recording before reconnecting cameras")
+        if not assignments:
+            raise RuntimeError("No camera assignments provided")
+
+        slot_names = set(DEFAULT_CAMERA_NAMES)
+        built: Dict[str, dict] = {}
+        result_assignments = []
+        seen_names = set()
+        seen_ids = set()
+
+        for raw in assignments:
+            name = str(raw.get("name") or "").strip()
+            if not name:
+                raise RuntimeError("Assignment missing camera name/slot")
+            if name not in slot_names:
+                raise RuntimeError(
+                    f"Unknown camera slot '{name}'. Expected one of: {', '.join(DEFAULT_CAMERA_NAMES)}"
+                )
+            if name in seen_names:
+                raise RuntimeError(f"Duplicate slot assignment: '{name}'")
+
+            entry = self._assignment_from_device(name, raw)
+            cam_id = entry["id"]
+            if cam_id is None or cam_id == "":
+                raise RuntimeError(f"Assignment for '{name}' is missing device id")
+            id_key = str(cam_id)
+            if id_key in seen_ids:
+                raise RuntimeError(f"Device {cam_id} assigned to multiple slots")
+
+            seen_names.add(name)
+            seen_ids.add(id_key)
+            built[name] = {
                 "index_or_path": cam_id,
-                "width": width,
-                "height": height,
-                "fps": fps,
+                "width": entry["width"],
+                "height": entry["height"],
+                "fps": entry["fps"],
             }
-            assignments.append({"name": name, "id": cam_id, "width": width, "height": height, "fps": fps})
+            result_assignments.append({
+                "name": name,
+                "id": cam_id,
+                "width": entry["width"],
+                "height": entry["height"],
+                "fps": entry["fps"],
+            })
 
         with self._camera_lock:
-            self.release_cameras()
-            self.config.cameras = new_cameras
-            self._persist_camera_config(new_cameras)
+            if not merge:
+                self.release_cameras()
+                self.config.cameras = dict(built)
+            else:
+                # Drop any live camera that owns a device we're about to claim
+                claimed = {str(cfg["index_or_path"]) for cfg in built.values()}
+                for live_name, live_cam in list(self.cameras.items()):
+                    live_id = str(getattr(live_cam, "index_or_path", ""))
+                    if live_name in built or live_id in claimed:
+                        self._disconnect_one(live_name)
 
-            self._connect_cameras()
+                updated = dict(self.config.cameras or {})
+                updated.update(built)
+                self.config.cameras = updated
+
+            self._persist_camera_config(self.config.cameras or {})
+
+            errors = []
+            connected_now = []
+            for name, cam_cfg in built.items():
+                try:
+                    self.cameras[name] = self._connect_one_camera(name, cam_cfg)
+                    connected_now.append(name)
+                except Exception as e:
+                    errors.append(f"{name}: {e}")
+                    logger.error(str(e))
+
+            self._cameras_connected = len(self.cameras) > 0
+            if not self.cameras and errors:
+                raise RuntimeError(
+                    "No cameras connected. " + (" | ".join(errors))
+                )
+            if errors:
+                logger.warning(
+                    f"Connected {len(connected_now)}/{len(built)} selected camera(s); some failed"
+                )
+
+            self._start_roboflow()
             if self.dataset is None:
-                self._create_or_load_dataset()
+                try:
+                    self._create_or_load_dataset()
+                except Exception as e:
+                    logger.warning(
+                        f"Dataset not ready after camera apply ({e}). "
+                        "Preview/inference will work; recording may fail until fixed."
+                    )
 
         return {
-            "assignments": assignments,
+            "assignments": result_assignments,
+            "connected": connected_now,
             "cameraConnected": self.cameras_connected,
+            "connectedCameras": {
+                name: str(getattr(cam, "index_or_path", name))
+                for name, cam in self.cameras.items()
+            },
         }
+
+    def disconnect_cameras(self, names: List[str]) -> dict:
+        """Disconnect one or more named camera slots."""
+        if self.is_recording:
+            raise RuntimeError("Stop recording before disconnecting cameras")
+        if not names:
+            raise RuntimeError("No camera names provided")
+
+        disconnected = []
+        with self._camera_lock:
+            for name in names:
+                name = str(name).strip()
+                if not name:
+                    continue
+                if name in self.cameras:
+                    self._disconnect_one(name)
+                    disconnected.append(name)
+                if self.config.cameras and name in self.config.cameras:
+                    del self.config.cameras[name]
+
+            self._cameras_connected = len(self.cameras) > 0
+            self._persist_camera_config(self.config.cameras or {})
+            self._start_roboflow()
+
+        logger.info(
+            f"📷 Disconnected camera(s): {', '.join(disconnected) if disconnected else '(none live)'}"
+        )
+        return {
+            "disconnected": disconnected,
+            "cameraConnected": self.cameras_connected,
+            "connectedCameras": {
+                name: str(getattr(cam, "index_or_path", name))
+                for name, cam in self.cameras.items()
+            },
+        }
+
+    def _disconnect_one(self, name: str) -> None:
+        """Disconnect a single live camera by slot name."""
+        camera = self.cameras.pop(name, None)
+        if camera is None:
+            return
+        try:
+            camera.disconnect()
+            logger.info(f"📷 Camera '{name}' disconnected")
+        except Exception as e:
+            logger.warning(f"Error disconnecting camera '{name}': {e}")
 
     def _persist_camera_config(self, cameras: Dict[str, dict]) -> None:
         """Deep-merge camera settings into config.yaml without wiping other keys."""
@@ -327,8 +512,20 @@ class EpisodeRecorder:
         if frame is None:
             raise RuntimeError(f"No frame from camera '{name}'")
 
-        # LeRobot OpenCV cameras default to RGB; OpenCV encode expects BGR
+        # LeRobot OpenCV cameras default to RGB
         image = np.asarray(frame)
+
+        # Ensure hosted inference is running for live preview (even before recording)
+        if self.config.roboflow_enabled and not self.roboflow.is_active:
+            self._start_roboflow()
+
+        # Kick async infer + draw cached detections onto the preview
+        if self.roboflow.is_active:
+            self.roboflow.submit(name, image)
+            if self.config.roboflow_preview_overlay:
+                image = self.roboflow.annotate(image, camera_name=name)
+
+        # OpenCV encode expects BGR
         if image.ndim == 3 and image.shape[2] == 3:
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
@@ -354,7 +551,10 @@ class EpisodeRecorder:
         for name, camera in self.cameras.items():
             height = getattr(camera, "height", None) or (self.config.cameras[name].get("height", 480))
             width = getattr(camera, "width", None) or (self.config.cameras[name].get("width", 640))
-            image_features[name] = (int(height), int(width), 3)
+            shape = (int(height), int(width), 3)
+            image_features[name] = shape
+            if self._save_overlays:
+                image_features[f"{name}_overlay"] = shape
 
         obs_features = {key: float for key in JOINT_POS_KEYS}
         obs_features.update(image_features)
@@ -392,6 +592,13 @@ class EpisodeRecorder:
                 num_processes=0,
                 num_threads=4 * num_cams,
             )
+            if self._save_overlays and not self._dataset_expects_overlays():
+                logger.warning(
+                    "Roboflow overlays enabled, but this dataset has no *_overlay "
+                    "image features. Overlays will not be written. Use a new "
+                    "recording.repo_id (or delete the dataset) to create a schema "
+                    "with overlay streams."
+                )
         else:
             logger.info(f"📂 Creating LeRobot dataset repo_id={repo_id} root={root}")
             self.dataset = LeRobotDataset.create(
@@ -429,11 +636,14 @@ class EpisodeRecorder:
             self.dataset.episode_buffer = self.dataset.create_episode_buffer()
             self.is_recording = True
             self.frame_count = 0
-            logger.info(f"🔴 Recording started (next episode index {self.episode_index})")
+            self._recording_episode_index = self.episode_index
+            self._open_predictions_file()
+            logger.info(f"🔴 Recording started (next episode index {self._recording_episode_index})")
             return True
         except Exception as e:
             logger.error(f"Failed to start recording: {e}")
             self.is_recording = False
+            self._close_predictions_file(delete=True)
             return False
 
     def add_frame(
@@ -450,20 +660,101 @@ class EpisodeRecorder:
             if images is None:
                 images = self.read_images()
 
+            # Submit to async hosted inference (non-blocking); overlays use latest cache
+            if self.roboflow.is_active:
+                for name, image in images.items():
+                    self.roboflow.submit(name, image, frame_index=self.frame_count)
+
             frame = {
                 "observation.state": np.asarray(observation_state, dtype=np.float32),
                 "action": np.asarray(action, dtype=np.float32),
                 "task": self.config.recording_task,
             }
+            write_overlays = self._dataset_expects_overlays()
             for name, image in images.items():
                 frame[f"observation.images.{name}"] = image
+                if write_overlays:
+                    overlay = self.roboflow.annotate(image, camera_name=name)
+                    frame[f"observation.images.{name}_overlay"] = overlay
 
             self.dataset.add_frame(frame)
+            if self._save_predictions:
+                self._append_predictions_line(images.keys())
             self.frame_count += 1
             return True
         except Exception as e:
             logger.error(f"Failed to add recording frame: {e}")
             return False
+
+    def _predictions_dir(self) -> Path:
+        return self._dataset_root() / "predictions"
+
+    def _open_predictions_file(self) -> None:
+        self._close_predictions_file(delete=False)
+        if not self._save_predictions:
+            return
+        try:
+            pred_dir = self._predictions_dir()
+            pred_dir.mkdir(parents=True, exist_ok=True)
+            path = pred_dir / f"predictions_ep{self._recording_episode_index:06d}.jsonl"
+            self._predictions_path = path
+            self._predictions_file = open(path, "w", encoding="utf-8")
+            logger.info(f"📝 Writing predictions to {path}")
+        except Exception as e:
+            logger.warning(f"Could not open predictions file: {e}")
+            self._predictions_file = None
+            self._predictions_path = None
+
+    def _close_predictions_file(self, *, delete: bool = False) -> None:
+        if self._predictions_file is not None:
+            try:
+                self._predictions_file.close()
+            except Exception:
+                pass
+            self._predictions_file = None
+        if delete and self._predictions_path is not None:
+            try:
+                if self._predictions_path.exists():
+                    self._predictions_path.unlink()
+                    logger.info(f"🗑️ Deleted predictions file {self._predictions_path}")
+            except Exception as e:
+                logger.warning(f"Could not delete predictions file: {e}")
+        self._predictions_path = None
+
+    def _append_predictions_line(self, camera_names) -> None:
+        if self._predictions_file is None:
+            return
+        try:
+            cameras_payload = {}
+            for name in camera_names:
+                pred = self.roboflow.get_latest(name)
+                if pred is None:
+                    cameras_payload[name] = {
+                        "predictions": [],
+                        "inference_ms": None,
+                        "stale": True,
+                        "model_id": self.config.roboflow_model_id,
+                    }
+                else:
+                    # stale if this prediction was produced for an earlier frame
+                    stale = (
+                        pred.frame_index is not None
+                        and pred.frame_index != self.frame_count
+                    )
+                    cameras_payload[name] = pred.to_dict(stale=stale)
+
+            record = {
+                "episode_index": self._recording_episode_index,
+                "frame_index": self.frame_count,
+                "model_id": self.config.roboflow_model_id,
+                "cameras": cameras_payload,
+            }
+            self._predictions_file.write(json.dumps(record) + "\n")
+            # Flush periodically so a crash does not lose the whole episode
+            if self.frame_count % 20 == 0:
+                self._predictions_file.flush()
+        except Exception as e:
+            logger.warning(f"Failed to append predictions line: {e}")
 
     def read_images(self) -> Dict[str, np.ndarray]:
         """Grab the latest frame from each connected camera."""
@@ -493,9 +784,16 @@ class EpisodeRecorder:
                 logger.warning("No frames recorded; discarding empty episode")
                 self.dataset.clear_episode_buffer(delete_images=True)
                 self.is_recording = False
+                self._close_predictions_file(delete=True)
                 return False
 
             self.dataset.save_episode()
+            if self._predictions_file is not None:
+                try:
+                    self._predictions_file.flush()
+                except Exception:
+                    pass
+            self._close_predictions_file(delete=False)
             logger.info(
                 f"💾 Episode saved ({self.frame_count} frames). "
                 f"Total episodes: {self.episode_index}"
@@ -506,6 +804,7 @@ class EpisodeRecorder:
         except Exception as e:
             logger.error(f"Failed to save episode: {e}")
             self.is_recording = False
+            self._close_predictions_file(delete=False)
             return False
 
     def discard(self) -> bool:
@@ -522,6 +821,7 @@ class EpisodeRecorder:
                 self.dataset.episode_buffer = self.dataset.create_episode_buffer()
             self.is_recording = False
             self.frame_count = 0
+            self._close_predictions_file(delete=True)
             if was_recording or discarded_frames > 0:
                 logger.info(f"🗑️ Discarded episode buffer ({discarded_frames} frames)")
             return True
@@ -529,6 +829,7 @@ class EpisodeRecorder:
             logger.error(f"Failed to discard episode: {e}")
             self.is_recording = False
             self.frame_count = 0
+            self._close_predictions_file(delete=True)
             return False
 
     def disconnect(self) -> None:
@@ -538,6 +839,11 @@ class EpisodeRecorder:
                 self.discard()
             except Exception:
                 pass
+
+        try:
+            self.roboflow.stop()
+        except Exception as e:
+            logger.warning(f"Error stopping Roboflow inference: {e}")
 
         with self._camera_lock:
             self.release_cameras()
