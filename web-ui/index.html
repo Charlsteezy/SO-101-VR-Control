@@ -95,9 +95,18 @@
               <span class="pill-dot" id="vrStatus"></span>
               <span>VR</span>
             </div>
+            <div class="status-pill" id="recPill">
+              <span class="pill-dot" id="recStatus"></span>
+              <span>REC</span>
+            </div>
           </div>
         </div>
       </header>
+
+      <!-- Live camera preview (shown when cameras are connected) -->
+      <section class="camera-preview" id="cameraPreview" hidden>
+        <div class="camera-preview-inner" id="cameraPreviewInner"></div>
+      </section>
 
       <!-- Content -->
       <main class="main-content">
@@ -113,6 +122,36 @@
               <p class="engage-status" id="engagementStatusText">Motors Disengaged</p>
               <div class="connection-warning" id="connectionWarning">
                 Arm is not engaged until you click Connect
+              </div>
+            </div>
+          </div>
+
+          <!-- Record Card -->
+          <div class="card">
+            <div class="card-header"><h2>Episode Recording</h2></div>
+            <div class="card-body record-card-body">
+              <div class="record-actions">
+                <button id="recordBtn" class="record-btn" onclick="toggleRecording()">
+                  <span id="recordBtnText">Start Recording</span>
+                </button>
+                <button id="discardBtn" class="discard-btn" onclick="discardRecording()" disabled>
+                  Discard
+                </button>
+              </div>
+              <p class="record-status" id="recordStatusText">Idle</p>
+              <div class="camera-search">
+                <div class="record-actions">
+                  <button id="searchCamerasBtn" class="search-cam-btn" onclick="searchCameras()">
+                    Search Cameras
+                  </button>
+                  <button id="applyCamerasBtn" class="apply-cam-btn" onclick="applyCameras()" disabled>
+                    Connect Found
+                  </button>
+                </div>
+                <ul class="camera-list" id="cameraSearchResults"></ul>
+              </div>
+              <div class="connection-warning" id="recordWarning">
+                Connect the robot before recording
               </div>
             </div>
           </div>

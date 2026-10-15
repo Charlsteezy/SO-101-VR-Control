@@ -1,8 +1,14 @@
 // Global state
 let isKeyboardEnabled = false;
 let isRobotEngaged = false;
+let isRecording = false;
+let camerasConnected = false;
+let discoveredCameras = [];
+let previewCameraNames = [];
+let previewTimer = null;
 let currentConfig = {};
 let warningTimeout = null;
+let recordWarningTimeout = null;
 
 // Settings modal
 function openSettings() {
@@ -115,8 +121,280 @@ function updateStatus() {
         isRobotEngaged = data.robotEngaged;
         updateEngagementUI();
       }
+
+      camerasConnected = !!data.cameraConnected;
+      isRecording = !!data.recording;
+      updateRecordingUI(data);
+      updateCameraPreview(data);
     })
     .catch(() => {});
+}
+
+function updateCameraPreview(data) {
+  const section = document.getElementById('cameraPreview');
+  const inner = document.getElementById('cameraPreviewInner');
+  if (!section || !inner) return;
+
+  const connected = data.connectedCameras || {};
+  const names = Object.keys(connected);
+
+  if (!data.cameraConnected || names.length === 0) {
+    stopCameraPreview();
+    section.hidden = true;
+    inner.innerHTML = '';
+    previewCameraNames = [];
+    return;
+  }
+
+  const namesKey = names.join('|');
+  const prevKey = previewCameraNames.join('|');
+  if (namesKey !== prevKey) {
+    previewCameraNames = names;
+    inner.innerHTML = '';
+    names.forEach(name => {
+      const tile = document.createElement('div');
+      tile.className = 'camera-tile';
+      tile.innerHTML =
+        `<div class="camera-tile-label">${name}</div>` +
+        `<img id="preview-${name}" alt="${name} camera" decoding="async">`;
+      inner.appendChild(tile);
+    });
+  }
+
+  section.hidden = false;
+  startCameraPreview();
+}
+
+function startCameraPreview() {
+  if (previewTimer) return;
+  refreshCameraPreviewFrames();
+  previewTimer = setInterval(refreshCameraPreviewFrames, 250);
+}
+
+function stopCameraPreview() {
+  if (previewTimer) {
+    clearInterval(previewTimer);
+    previewTimer = null;
+  }
+}
+
+function refreshCameraPreviewFrames() {
+  if (!camerasConnected || previewCameraNames.length === 0) return;
+  const bust = Date.now();
+  previewCameraNames.forEach(name => {
+    const img = document.getElementById(`preview-${name}`);
+    if (!img) return;
+    img.src = `/api/cameras/${encodeURIComponent(name)}/frame.jpg?t=${bust}`;
+  });
+}
+
+function updateRecordingUI(data) {
+  const btn = document.getElementById('recordBtn');
+  const text = document.getElementById('recordBtnText');
+  const discard = document.getElementById('discardBtn');
+  const status = document.getElementById('recordStatusText');
+  const recDot = document.getElementById('recStatus');
+  const recordingEnabled = data.recordingEnabled !== false;
+
+  if (!btn || !text || !discard || !status) return;
+
+  if (isRecording) {
+    btn.classList.add('recording');
+    text.textContent = 'Stop Recording';
+    discard.disabled = false;
+    const ep = data.episodeIndex ?? 0;
+    const frames = data.frameCount ?? 0;
+    status.textContent = `Recording ep ${ep} · ${frames} frames`;
+    status.style.color = 'var(--red)';
+    if (recDot) recDot.className = 'pill-dot recording';
+  } else {
+    btn.classList.remove('recording');
+    text.textContent = 'Start Recording';
+    discard.disabled = true;
+    const ep = data.episodeIndex ?? 0;
+    if (recordingEnabled && !camerasConnected) {
+      status.textContent = 'Cameras not connected';
+      status.style.color = 'var(--amber)';
+    } else {
+      status.textContent = ep > 0 ? `Idle · ${ep} episode(s) saved` : 'Idle';
+      status.style.color = 'var(--text-muted)';
+    }
+    if (recDot) recDot.className = 'pill-dot' + (camerasConnected ? ' connected' : '');
+  }
+
+  btn.disabled = !recordingEnabled && !isRecording;
+}
+
+function showRecordWarning(message) {
+  const warn = document.getElementById('recordWarning');
+  if (!warn) return;
+  warn.textContent = message;
+  warn.classList.add('show');
+  if (recordWarningTimeout) clearTimeout(recordWarningTimeout);
+  recordWarningTimeout = setTimeout(() => warn.classList.remove('show'), 5000);
+}
+
+function renderCameraResults(cameras) {
+  const list = document.getElementById('cameraSearchResults');
+  const applyBtn = document.getElementById('applyCamerasBtn');
+  if (!list) return;
+
+  list.innerHTML = '';
+  if (!cameras || cameras.length === 0) {
+    list.innerHTML = '<li class="camera-empty">No cameras found</li>';
+    if (applyBtn) applyBtn.disabled = true;
+    return;
+  }
+
+  cameras.forEach((cam, i) => {
+    const profile = cam.default_stream_profile || {};
+    const li = document.createElement('li');
+    li.innerHTML =
+      `<span class="cam-id">${cam.id}</span>` +
+      `<span class="cam-meta">${profile.width || '?'}×${profile.height || '?'} @ ${profile.fps || '?'}fps</span>`;
+    if (i < 3) li.classList.add('will-use');
+    list.appendChild(li);
+  });
+  if (applyBtn) applyBtn.disabled = false;
+}
+
+function searchCameras() {
+  const btn = document.getElementById('searchCamerasBtn');
+  const applyBtn = document.getElementById('applyCamerasBtn');
+  if (isRecording) {
+    showRecordWarning('Stop recording before searching for cameras');
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Searching...';
+  }
+  if (applyBtn) applyBtn.disabled = true;
+
+  fetch('/api/cameras/search')
+    .then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.success === false) {
+        throw new Error(data.error || 'Camera search failed');
+      }
+      discoveredCameras = data.cameras || [];
+      renderCameraResults(discoveredCameras);
+      camerasConnected = false;
+      updateRecordingUI({
+        recording: false,
+        cameraConnected: false,
+        recordingEnabled: true,
+        episodeIndex: 0,
+        frameCount: 0,
+      });
+      updateCameraPreview({ cameraConnected: false, connectedCameras: {} });
+      if (discoveredCameras.length === 0) {
+        showRecordWarning('No USB cameras detected');
+      }
+    })
+    .catch(err => {
+      discoveredCameras = [];
+      renderCameraResults([]);
+      showRecordWarning(err.message || 'Camera search failed');
+    })
+    .finally(() => {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Search Cameras';
+      }
+    });
+}
+
+function applyCameras() {
+  const btn = document.getElementById('applyCamerasBtn');
+  if (isRecording) {
+    showRecordWarning('Stop recording before connecting cameras');
+    return;
+  }
+  if (!discoveredCameras.length) {
+    showRecordWarning('Search for cameras first');
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+  }
+
+  fetch('/api/cameras/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cameras: discoveredCameras })
+  })
+    .then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to connect cameras');
+      }
+      camerasConnected = !!data.cameraConnected;
+      const names = (data.assignments || []).map(a => `${a.name}→${a.id}`).join(', ');
+      showRecordWarning(camerasConnected ? `Connected: ${names}` : 'Camera connect incomplete');
+      const connectedMap = {};
+      (data.assignments || []).forEach(a => { connectedMap[a.name] = String(a.id); });
+      updateCameraPreview({
+        cameraConnected: camerasConnected,
+        connectedCameras: connectedMap,
+      });
+      updateStatus();
+    })
+    .catch(err => showRecordWarning(err.message || 'Failed to connect cameras'))
+    .finally(() => {
+      if (btn) {
+        btn.disabled = !discoveredCameras.length;
+        btn.textContent = 'Connect Found';
+      }
+    });
+}
+
+function toggleRecording() {
+  if (isRecording) {
+    postRecordingAction('stop');
+    return;
+  }
+  if (!isRobotEngaged) {
+    showRecordWarning('Connect the robot before recording');
+    showConnectionWarning();
+    return;
+  }
+  if (!camerasConnected) {
+    showRecordWarning('Cameras are not connected — click Search Cameras');
+    return;
+  }
+  postRecordingAction('start');
+}
+
+function discardRecording() {
+  if (!isRecording) return;
+  if (!confirm('Discard the current episode without saving?')) return;
+  postRecordingAction('discard');
+}
+
+function postRecordingAction(action) {
+  fetch('/api/recording', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action })
+  })
+    .then(async r => {
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.success === false) {
+        showRecordWarning(data.error || `Recording ${action} failed`);
+        return;
+      }
+      if (action === 'start') {
+        isRecording = true;
+        updateRecordingUI({ recording: true, episodeIndex: 0, frameCount: 0, cameraConnected: camerasConnected, recordingEnabled: true });
+      } else if (action === 'stop' || action === 'discard') {
+        isRecording = false;
+        updateRecordingUI({ recording: false, episodeIndex: 0, frameCount: 0, cameraConnected: camerasConnected, recordingEnabled: true });
+      }
+      updateStatus();
+    })
+    .catch(() => showRecordWarning(`Recording ${action} failed`));
 }
 
 function updateEngagementUI() {

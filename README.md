@@ -11,6 +11,7 @@ Open-source browser-based VR teleoperation for the SO-101 robot arm using Meta Q
 - **Calibration-safe kinematics** — joint limits tightened to actual motor range
 - **Self-collision protection** — ground collision prevention, velocity limiting
 - **Dark UI dashboard** — real-time status, settings, keyboard fallback
+- **Episode recording** — LeRobot datasets with 3 USB cameras + joint obs/actions
 - **PyBullet IK** — multi-reference pose inverse kinematics solver
 
 ## Hardware
@@ -58,6 +59,23 @@ Open the URL on your Quest browser, click **Connect Robot**, then **Start VR Con
 | **Wrist rotation** | Controller roll & pitch |
 
 Either hand works — both are remapped to the single arm.
+
+## Episode Recording
+
+Record teleop episodes to a LeRobot dataset (3 USB cameras + joint observation/action at 20 Hz).
+
+1. Start the app and open the dashboard.
+2. Under **Episode Recording**, click **Search Cameras**, then **Connect Found**
+   (assigns devices to `front` / `wrist` / `top` and saves `config.yaml`).
+3. Or set `cameras.*.index_or_path` manually after:
+   ```bash
+   conda activate teleop
+   lerobot-find-cameras opencv
+   ```
+4. **Connect Robot**, then **Start Recording**.
+5. Teleop as usual; click **Stop Recording** to save, or **Discard** to drop the episode.
+
+Episodes are written under `datasets/<repo_id>` (e.g. `datasets/local_so101_vr`), configurable via `recording.root` / `recording.repo_id`. Task label comes from `recording.task`.
 
 ## Keyboard Controls
 
@@ -108,6 +126,9 @@ VRWebSocketServer
       ▼
 ControlLoop → _resolve_arm() → routes both hands to single arm
       │
+      ├── EpisodeRecorder (optional)
+      │     ├── OpenCVCamera x3
+      │     └── LeRobotDataset.add_frame / save_episode
       ▼
 RobotInterface
   ├── IK solver (PyBullet, calibration-safe limits)

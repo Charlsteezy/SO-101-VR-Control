@@ -66,7 +66,35 @@ DEFAULT_CONFIG = {
         "position_error_threshold": 0.001,
         "hysteresis_threshold": 0.01,
         "movement_penalty_weight": 0.01
-    }
+    },
+    "recording": {
+        "enabled": True,
+        "repo_id": "local/so101_vr",
+        "root": "datasets",
+        "fps": 20,
+        "task": "pick and place",
+        "robot_type": "so101",
+    },
+    "cameras": {
+        "front": {
+            "index_or_path": 0,
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+        },
+        "wrist": {
+            "index_or_path": 2,
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+        },
+        "top": {
+            "index_or_path": 4,
+            "width": 640,
+            "height": 480,
+            "fps": 30,
+        },
+    },
 }
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -244,6 +272,15 @@ class TelegripConfig:
     pos_step: float = POS_STEP
     angle_step: float = ANGLE_STEP
     gripper_step: float = GRIPPER_STEP
+
+    # Recording / dataset
+    recording_enabled: bool = True
+    recording_repo_id: str = "local/so101_vr"
+    recording_root: str = "datasets"
+    recording_fps: int = 20
+    recording_task: str = "pick and place"
+    recording_robot_type: str = "so101"
+    cameras: Dict[str, dict] = None
     
     def __post_init__(self):
         # Initialize follower_ports if not set
@@ -262,6 +299,21 @@ class TelegripConfig:
         # Read arm enabled flags from config data
         self.left_arm_enabled = _config_data["robot"]["left_arm"].get("enabled", True)
         self.right_arm_enabled = _config_data["robot"]["right_arm"].get("enabled", True)
+
+        recording = _config_data.get("recording", {})
+        self.recording_enabled = recording.get("enabled", True)
+        self.recording_repo_id = recording.get("repo_id", "local/so101_vr")
+        self.recording_root = recording.get("root", "datasets")
+        self.recording_fps = int(recording.get("fps", 20))
+        self.recording_task = recording.get("task", "pick and place")
+        self.recording_robot_type = recording.get("robot_type", "so101")
+
+        if self.cameras is None:
+            self.cameras = dict(_config_data.get("cameras", {}))
+
+    def get_absolute_recording_root(self) -> str:
+        """Get absolute path to the dataset root directory."""
+        return str(get_absolute_path(self.recording_root))
     
     @property
     def ssl_files_exist(self) -> bool:

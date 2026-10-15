@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 from .config import TelegripConfig, NUM_JOINTS, WRIST_FLEX_INDEX, WRIST_ROLL_INDEX, GRIPPER_INDEX
 from .core.robot_interface import RobotInterface
-# PyBulletVisualizer will be imported on demand
+# PyBulletVisualizer / EpisodeRecorder imported on demand
 from .inputs.base import ControlGoal, ControlMode
 # WebKeyboardHandler will be imported on demand to avoid circular imports
 
@@ -55,6 +55,7 @@ class ControlLoop:
         self.robot_interface = None
         self.visualizer = None
         self.web_keyboard_handler = None  # Reference to web-based keyboard handler
+        self.episode_recorder = None
         
         # Arm states
         self.left_arm = ArmState("left")
@@ -130,6 +131,26 @@ class ControlLoop:
             for i, error in enumerate(setup_errors, 1):
                 logger.error(f"  {i}. {error}")
         
+        # Setup episode recorder (cameras + LeRobot dataset).
+        # Keep the instance even if cameras fail so the UI can Search/Connect later.
+        if self.config.recording_enabled:
+            try:
+                from .core.episode_recorder import EpisodeRecorder
+
+                self.episode_recorder = EpisodeRecorder(self.config)
+                if not self.episode_recorder.setup():
+                    error_msg = (
+                        "Episode recorder cameras not ready — "
+                        "use Search Cameras in the dashboard"
+                    )
+                    logger.warning(error_msg)
+                    setup_errors.append(error_msg)
+            except Exception as e:
+                error_msg = f"Episode recorder setup failed with exception: {e}"
+                logger.error(error_msg)
+                setup_errors.append(error_msg)
+                self.episode_recorder = None
+
         # Set robot interface on web keyboard handler so it can get current positions
         if self.web_keyboard_handler and self.robot_interface:
             self.web_keyboard_handler.set_robot_interface(self.robot_interface)
@@ -157,6 +178,9 @@ class ControlLoop:
                 
                 # Update robot (with error resilience)
                 self._update_robot_safely()
+
+                # Capture episode frame after commands are sent
+                self._record_frame_safely()
                 
                 # Update visualization
                 if self.visualizer:
@@ -184,6 +208,9 @@ class ControlLoop:
                 logger.info("🛑 Disengaging robot before shutdown...")
                 self.robot_interface.disengage()
             self.robot_interface.disconnect()
+
+        if self.episode_recorder:
+            self.episode_recorder.disconnect()
 
         if self.visualizer:
             self.visualizer.disconnect()
@@ -281,6 +308,23 @@ class ControlLoop:
                     logger.error("❌ Failed to disengage robot motors")
             else:
                 logger.warning("Cannot disengage robot: no robot interface")
+        elif action == 'recording_start':
+            if not self.episode_recorder:
+                logger.error("Cannot start recording: episode recorder unavailable")
+            elif not self.robot_interface or not self.robot_interface.is_engaged:
+                logger.warning("Cannot start recording: robot motors not engaged")
+            else:
+                self.episode_recorder.start()
+        elif action == 'recording_stop':
+            if self.episode_recorder:
+                self.episode_recorder.stop()
+            else:
+                logger.warning("Cannot stop recording: episode recorder unavailable")
+        elif action == 'recording_discard':
+            if self.episode_recorder:
+                self.episode_recorder.discard()
+            else:
+                logger.warning("Cannot discard recording: episode recorder unavailable")
         else:
             logger.warning(f"Unknown command: {action}")
 
@@ -440,6 +484,34 @@ class ControlLoop:
         # Send commands to robot
         if self.robot_interface.is_connected and self.robot_interface.is_engaged:
             self.robot_interface.send_command()
+
+    def _active_recording_arm(self) -> Optional[str]:
+        """Prefer the connected single arm for observation/action capture."""
+        if not self.robot_interface:
+            return None
+        if self.robot_interface.left_arm_connected:
+            return "left"
+        if self.robot_interface.right_arm_connected:
+            return "right"
+        return None
+
+    def _record_frame_safely(self) -> None:
+        """Record one dataset frame if an episode is active."""
+        if not self.episode_recorder or not self.episode_recorder.is_recording:
+            return
+        if not self.robot_interface:
+            return
+
+        try:
+            arm = self._active_recording_arm()
+            if arm is None:
+                return
+
+            obs = np.asarray(self.robot_interface.get_actual_arm_angles(arm), dtype=np.float32)
+            action = np.asarray(self.robot_interface.get_arm_angles(arm), dtype=np.float32)
+            self.episode_recorder.add_frame(obs, action)
+        except Exception as e:
+            logger.error(f"Error recording episode frame: {e}")
     
     def _update_visualization(self):
         """Update PyBullet visualization."""
@@ -517,7 +589,7 @@ class ControlLoop:
     @property
     def status(self) -> Dict:
         """Get current control loop status."""
-        return {
+        status = {
             "running": self.is_running,
             "left_arm_mode": self.left_arm.mode.value,
             "right_arm_mode": self.right_arm.mode.value,
@@ -525,4 +597,12 @@ class ControlLoop:
             "left_arm_connected": self.robot_interface.get_arm_connection_status("left") if self.robot_interface else False,
             "right_arm_connected": self.robot_interface.get_arm_connection_status("right") if self.robot_interface else False,
             "visualizer_connected": self.visualizer.is_connected if self.visualizer else False,
-        } 
+            "recording": False,
+            "episodeIndex": 0,
+            "frameCount": 0,
+            "cameraConnected": False,
+            "recordingEnabled": bool(self.config.recording_enabled),
+        }
+        if self.episode_recorder:
+            status.update(self.episode_recorder.status)
+        return status 

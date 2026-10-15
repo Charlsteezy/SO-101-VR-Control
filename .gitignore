@@ -83,6 +83,9 @@ cython_debug/
 key.pem
 cert.pem
 
+# Recorded LeRobot datasets
+datasets/
+
 # AI-assistant notes
 CLAUDE.md
 SO101_VR_CONTROL_GUIDE.md

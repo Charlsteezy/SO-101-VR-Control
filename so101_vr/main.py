@@ -112,33 +112,40 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
     
     def do_GET(self):
         """Handle GET requests."""
-        if self.path == '/api/status':
+        # BaseHTTPRequestHandler keeps ?query on self.path — strip for routing
+        path_only = self.path.split('?', 1)[0]
+
+        if path_only == '/api/status':
             self.handle_status_request()
-        elif self.path == '/api/config':
+        elif path_only == '/api/config':
             self.handle_config_get_request()
-        elif self.path == '/' or self.path == '/index.html':
+        elif path_only == '/api/cameras/search':
+            self.handle_camera_search_request()
+        elif path_only.startswith('/api/cameras/') and path_only.endswith('/frame.jpg'):
+            self.handle_camera_frame_request(path_only)
+        elif path_only == '/' or path_only == '/index.html':
             # Serve main page from web-ui directory
             self.serve_file('web-ui/index.html', 'text/html')
-        elif self.path.endswith('.css'):
+        elif path_only.endswith('.css'):
             # Serve CSS files from web-ui directory
-            self.serve_file(f'web-ui{self.path}', 'text/css')
-        elif self.path.endswith('.js'):
+            self.serve_file(f'web-ui{path_only}', 'text/css')
+        elif path_only.endswith('.js'):
             # Serve JS files from web-ui directory
-            self.serve_file(f'web-ui{self.path}', 'application/javascript')
-        elif self.path.endswith('.ico'):
-            self.serve_file(self.path[1:], 'image/x-icon')
-        elif self.path.endswith(('.jpg', '.jpeg')):
+            self.serve_file(f'web-ui{path_only}', 'application/javascript')
+        elif path_only.endswith('.ico'):
+            self.serve_file(path_only[1:], 'image/x-icon')
+        elif path_only.endswith(('.jpg', '.jpeg')):
             # Serve image files from web-ui directory
-            self.serve_file(f'web-ui{self.path}', 'image/jpeg')
-        elif self.path.endswith('.png'):
+            self.serve_file(f'web-ui{path_only}', 'image/jpeg')
+        elif path_only.endswith('.png'):
             # Serve image files from web-ui directory
-            self.serve_file(f'web-ui{self.path}', 'image/png')
-        elif self.path.endswith('.gif'):
-            self.serve_file(f'web-ui{self.path}', 'image/gif')
-        elif self.path.endswith('.svg'):
-            self.serve_file(f'web-ui{self.path}', 'image/svg+xml')
-        elif self.path.endswith('.mp4'):
-            self.serve_file(f'web-ui{self.path}', 'video/mp4')
+            self.serve_file(f'web-ui{path_only}', 'image/png')
+        elif path_only.endswith('.gif'):
+            self.serve_file(f'web-ui{path_only}', 'image/gif')
+        elif path_only.endswith('.svg'):
+            self.serve_file(f'web-ui{path_only}', 'image/svg+xml')
+        elif path_only.endswith('.mp4'):
+            self.serve_file(f'web-ui{path_only}', 'video/mp4')
         else:
             self.send_error(404, "Not found")
     
@@ -148,6 +155,10 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             self.handle_keyboard_request()
         elif self.path == '/api/robot':
             self.handle_robot_request()
+        elif self.path == '/api/recording':
+            self.handle_recording_request()
+        elif self.path == '/api/cameras/apply':
+            self.handle_camera_apply_request()
         elif self.path == '/api/keypress':
             self.handle_keypress_request()
         elif self.path == '/api/config':
@@ -273,6 +284,196 @@ class APIHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(400, "Invalid JSON")
         except Exception as e:
             logger.error(f"Error handling robot request: {e}")
+            self.send_error(500, str(e))
+
+    def _get_episode_recorder(self):
+        """Return the control-loop episode recorder, if available."""
+        if hasattr(self.server, 'api_handler') and self.server.api_handler:
+            system = self.server.api_handler
+            if system.control_loop:
+                return getattr(system.control_loop, 'episode_recorder', None)
+        return None
+
+    def handle_camera_frame_request(self, path_only: Optional[str] = None):
+        """Serve a JPEG preview frame for one connected camera."""
+        try:
+            # Path: /api/cameras/<name>/frame.jpg
+            path = path_only or self.path.split('?', 1)[0]
+            parts = path.split('/')
+            if len(parts) < 5:
+                self.send_error(404, "Not found")
+                return
+            cam_name = parts[3]
+            if not cam_name or cam_name in ('.', '..') or '/' in cam_name:
+                self.send_error(400, "Invalid camera name")
+                return
+
+            recorder = self._get_episode_recorder()
+            if recorder is None or not recorder.cameras_connected:
+                self.send_error(503, "Cameras not connected")
+                return
+            if cam_name not in recorder.cameras:
+                self.send_error(404, f"Camera '{cam_name}' not connected")
+                return
+
+            jpeg = recorder.get_preview_jpeg(cam_name)
+            self.send_response(200)
+            self.send_header('Content-Type', 'image/jpeg')
+            self.send_header('Content-Length', str(len(jpeg)))
+            self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            self.end_headers()
+            self.wfile.write(jpeg)
+        except Exception as e:
+            logger.error(f"Error serving camera frame: {e}")
+            try:
+                self.send_error(500, str(e))
+            except Exception:
+                pass
+
+    def handle_camera_search_request(self):
+        """Scan for USB OpenCV cameras and return JSON results."""
+        try:
+            recorder = self._get_episode_recorder()
+            if recorder is None:
+                # Allow search even if recorder wasn't constructed (recording disabled / crash)
+                from .core.episode_recorder import EpisodeRecorder
+                from .config import TelegripConfig
+                recorder = EpisodeRecorder(TelegripConfig())
+
+            cameras = recorder.discover_cameras()
+            # Keep discovery on the live recorder for a subsequent Apply
+            live = self._get_episode_recorder()
+            if live is not None and live is not recorder:
+                live.last_discovered = cameras
+                # Ensure devices released on live instance too
+                live.release_cameras()
+            elif live is None and hasattr(self.server, 'api_handler') and self.server.api_handler:
+                system = self.server.api_handler
+                if system.control_loop and system.config.recording_enabled:
+                    system.control_loop.episode_recorder = recorder
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                "cameras": cameras,
+                "count": len(cameras),
+            }).encode('utf-8'))
+        except Exception as e:
+            logger.error(f"Error searching cameras: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": False,
+                "error": str(e),
+                "cameras": [],
+            }).encode('utf-8'))
+
+    def handle_camera_apply_request(self):
+        """Apply discovered cameras to front/wrist/top and connect them."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = {}
+            if content_length > 0:
+                body = json.loads(self.rfile.read(content_length).decode('utf-8'))
+
+            recorder = self._get_episode_recorder()
+            if recorder is None:
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "success": False,
+                    "error": "Recording is not enabled",
+                }).encode('utf-8'))
+                return
+
+            devices = body.get("cameras")
+            result = recorder.apply_discovered_cameras(devices)
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": True,
+                **result,
+            }).encode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+        except Exception as e:
+            logger.error(f"Error applying cameras: {e}")
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "success": False,
+                "error": str(e),
+            }).encode('utf-8'))
+
+    def handle_recording_request(self):
+        """Handle episode recording start/stop/discard requests."""
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                self.send_error(400, "No request body")
+                return
+
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            action = data.get('action')
+            logger.info(f"🔴 Received recording action: {action}")
+
+            if action not in ['start', 'stop', 'discard']:
+                self.send_error(400, f"Invalid action: {action}")
+                return
+
+            if not hasattr(self.server, 'api_handler') or not self.server.api_handler:
+                self.send_error(500, "System not available")
+                return
+
+            system = self.server.api_handler
+            recorder = None
+            if system.control_loop:
+                recorder = getattr(system.control_loop, 'episode_recorder', None)
+
+            if action == 'start':
+                if recorder is None:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": False,
+                        "error": "Recording unavailable (check cameras/config)"
+                    }).encode('utf-8'))
+                    return
+
+                robot_engaged = False
+                if system.control_loop and system.control_loop.robot_interface:
+                    robot_engaged = system.control_loop.robot_interface.is_engaged
+                if not robot_engaged:
+                    self.send_response(400)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "success": False,
+                        "error": "Connect robot before recording"
+                    }).encode('utf-8'))
+                    return
+
+            command_name = f"recording_{action}"
+            logger.info(f"🔴 Adding command to queue: {command_name}")
+            system.add_control_command(command_name)
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"success": True, "action": action}).encode('utf-8'))
+
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+        except Exception as e:
+            logger.error(f"Error handling recording request: {e}")
             self.send_error(500, str(e))
     
     def handle_keypress_request(self):

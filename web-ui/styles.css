@@ -120,6 +120,58 @@ body {
   box-shadow: 0 0 6px rgba(118,185,0,.6);
 }
 
+/* ── Camera Preview ── */
+.camera-preview {
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #0c0c0e 0%, var(--bg) 100%);
+  flex-shrink: 0;
+}
+
+.camera-preview[hidden] {
+  display: none !important;
+}
+
+.camera-preview-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 14px 28px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.camera-tile {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 4 / 3;
+}
+
+.camera-tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #111;
+}
+
+.camera-tile-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 /* ── Main Grid ── */
 .main-content {
   flex: 1;
@@ -236,6 +288,170 @@ body {
 }
 
 .connection-warning.show { display: block; }
+
+/* ── Record Card ── */
+.record-card-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px;
+}
+
+.record-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.record-btn {
+  background: var(--red);
+  border: none;
+  color: #fff;
+  padding: 10px 28px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.record-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239,68,68,.25);
+}
+
+.record-btn.recording {
+  background: var(--red);
+  animation: pulse-rec 1.4s infinite;
+}
+
+.record-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.discard-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.discard-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.discard-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.record-status {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+@keyframes pulse-rec {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.5); }
+  70%  { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+}
+
+.pill-dot.recording {
+  background: var(--red);
+  box-shadow: 0 0 0 3px var(--red-dim);
+}
+
+.camera-search {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.search-cam-btn,
+.apply-cam-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all .15s;
+}
+
+.search-cam-btn:hover:not(:disabled),
+.apply-cam-btn:hover:not(:disabled) {
+  border-color: var(--sky);
+  color: var(--sky);
+}
+
+.search-cam-btn:disabled,
+.apply-cam-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.camera-list {
+  list-style: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.camera-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg);
+}
+
+.camera-list li.will-use {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: var(--sky-dim);
+  color: var(--text);
+}
+
+.camera-list .cam-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+
+.camera-list .cam-meta {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.camera-list .camera-empty {
+  justify-content: center;
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, 0.25);
+  background: var(--amber-dim);
+}
 
 /* ── Steps ── */
 ol.steps {
@@ -593,6 +809,16 @@ a-scene { position: fixed; inset: 0; z-index: 1; }
   .header-status { align-self: flex-start; }
   .key-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
+  .camera-preview-inner {
+    grid-template-columns: 1fr;
+    padding: 12px 16px;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 900px) {
+  .camera-preview-inner {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  }
 }
 
 @media (display-mode: standalone) {
